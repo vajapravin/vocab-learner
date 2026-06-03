@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="$1"
+first_line="$(head -n1 "$msg_file")"
+
+# Allow merge / revert / fixup commits through unchanged
+if [[ "$first_line" =~ ^(Merge|Revert|fixup!|squash!) ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|refactor|test|docs|chore|perf|build|ci|style)(\([a-z0-9_-]+\))?!?: .{1,72}$'
+
+if ! [[ "$first_line" =~ $pattern ]]; then
+  echo "❌ Commit message does not follow Conventional Commits."
+  echo ""
+  echo "   Got: $first_line"
+  echo ""
+  echo "   Expected: <type>(<optional scope>): <summary ≤72 chars>"
+  echo "   Types:    feat, fix, refactor, test, docs, chore, perf, build, ci, style"
+  echo ""
+  echo "   Example:  feat(extractor): add vision-based page extractor"
+  exit 1
+fi

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo 'DETACHED')"
+
+if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+  echo "❌ Direct commits to '$branch' are not allowed."
+  echo "   Create a feature branch: git checkout -b feat/your-change"
+  exit 1
+fi
+
+# Run fast formatters/linters on staged Python files only
+staged_py=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+if [[ -n "$staged_py" ]]; then
+  echo "→ ruff format --check"
+  echo "$staged_py" | xargs uv run ruff format --check
+  echo "→ ruff check"
+  echo "$staged_py" | xargs uv run ruff check
+fi
+
+echo "✅ pre-commit checks passed"
