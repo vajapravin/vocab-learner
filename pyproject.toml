@@ -10,6 +10,7 @@ dependencies = [
     "structlog>=24.4",
     "pillow>=11.0",
     "python-dotenv>=1.0",
+    "openai>=1.55.0",
 ]
 
 [dependency-groups]
