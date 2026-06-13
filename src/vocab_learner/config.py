@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Provider = Literal["anthropic", "openai"]
 
 
 class Settings(BaseSettings):
@@ -17,17 +20,21 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Anthropic key uses its own env var name, no prefix
-    anthropic_api_key: str = Field(..., alias="ANTHROPIC_API_KEY")
+    # Provider selection
+    llm_provider: Provider = "openai"
+
+    # Provider-specific keys (each optional; the selected provider's key is required
+    # at client-construction time, not at settings-load time)
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
     log_level: str = "INFO"
-    extraction_model: str = "claude-sonnet-5"
-    teaching_model: str = "claude-sonnet-5"
+    extraction_model: str = "gpt-4.1"
+    teaching_model: str = "gpt-4.1"
     output_dir: Path = Path("./output")
     fixtures_dir: Path = Path("./fixtures")
     prompts_dir: Path = Path("./prompts")
 
-    # LLM defaults
     max_tokens: int = 4096
     request_timeout_seconds: float = 120.0
 
