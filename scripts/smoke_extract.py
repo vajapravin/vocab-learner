@@ -8,7 +8,7 @@ from pathlib import Path
 
 from vocab_learner.config import load_settings
 from vocab_learner.extractor import Extractor
-from vocab_learner.llm.anthropic_client import AnthropicClient
+from vocab_learner.llm.factory import build_llm_client
 from vocab_learner.logging_setup import configure_logging
 
 
@@ -20,10 +20,7 @@ def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
 
-    client = AnthropicClient(
-        api_key=settings.anthropic_api_key,
-        timeout_seconds=settings.request_timeout_seconds,
-    )
+    client = build_llm_client(settings)
     extractor = Extractor(client=client, settings=settings)
     result = extractor.extract(args.image)
 
