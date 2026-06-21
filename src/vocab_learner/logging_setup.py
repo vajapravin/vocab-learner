@@ -1,4 +1,5 @@
 """structlog configuration. Call configure_logging() once at process start."""
+
 from __future__ import annotations
 
 import logging

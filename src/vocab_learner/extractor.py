@@ -5,11 +5,11 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from vocab_learner.utils import utcnow
 from vocab_learner.config import Settings
 from vocab_learner.llm.protocol import LLMClient
 from vocab_learner.logging_setup import get_logger
 from vocab_learner.models import ExtractionResult
+from vocab_learner.utils import utcnow
 
 log = get_logger(__name__)
 
