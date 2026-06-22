@@ -93,3 +93,22 @@ class TeachingCard(BaseModel):
         min_length=1,
         description="Fill-in-the-blank sentence pattern learners can adapt.",
     )
+
+
+class Story(BaseModel):
+    """A short story generated from a session's teaching cards."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+    words_used: list[str] = Field(
+        ...,
+        description="Vocabulary words from the session that appear in the body.",
+    )
+    coverage: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the session's words that appear in the body.",
+    )
