@@ -129,6 +129,18 @@ class TestRender:
         assert "**Synonyms:** \n" not in output
         assert "**Synonyms:**\n" not in output
 
+    def test_story_appears_after_all_word_cards(self) -> None:
+        """Story is the reward at the end, not the intro."""
+        renderer = MarkdownRenderer()
+        output = renderer.render(_make_session())
+
+        last_card_pos = output.rfind("### 2. account")
+        story_pos = output.find("## Story:")
+
+        assert last_card_pos != -1
+        assert story_pos != -1
+        assert story_pos > last_card_pos, "Story should appear after the final word card"
+
 
 class TestRenderToFile:
     def test_writes_file_and_returns_path(self, tmp_path: Path) -> None:
