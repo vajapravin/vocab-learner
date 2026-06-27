@@ -2,6 +2,7 @@
 name = "vocab-learner"
 version = "0.1.0"
 description = "Image-to-text vocabulary learning system using vision LLMs"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.40.0",
