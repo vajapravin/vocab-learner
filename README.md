@@ -46,3 +46,39 @@ uv run vocab-learner page.jpg | xargs code
 ## What It Does
 
 The system is a three-stage LLM pipeline behind a provider-agnostic client interface:
+
+## Example Input & Output
+
+### Input: a photographed dictionary page
+
+<a href="fixtures/page_012.jpg">
+  <img src="fixtures/page_012.jpg" alt="A page from an English–Gujarati dictionary" width="400"/>
+</a>
+
+_A dense two-column page from an English–Gujarati dictionary — 30+ headwords, mixed Latin and Gujarati scripts, spine curvature, and normal photograph imperfections. Click to view full size._
+
+### Output: a full study session
+
+**→ [Read the full generated session](docs/example_session.md)** — 29 teaching cards + a reinforcement story, ~4,000 words of structured Markdown.
+
+One card from the run, as a taste:
+
+> ### 1. accession _(noun)_
+>
+> **Pronunciation:** ak-SESH-un · /əkˈsɛʃ.ən/
+>
+> **Meaning:** Accession means the act of joining or gaining a new position, often used when someone takes on an important role or when something is added officially.
+>
+> **Example:** _"After the CEO's accession to the company, major changes started happening."_
+>
+> **Where you'll see it:** You might see 'accession' in news articles about politics or business, especially when someone starts a new high-level job or when a country joins an organization.
+>
+> **Memory hook:** Imagine a king stepping up onto a throne; that's his accession – the moment he officially becomes king.
+>
+> **Word connections:**
+> - **Synonyms:** entry, admission, attainment
+> - **Antonyms:** resignation, removal
+> - **Collocations:** accession to power, accession speech, accession to the throne
+> - **Word family:** access, accessory, accessional
+>
+> **Try it yourself:** The accession of ___ to ___ changed everything.
