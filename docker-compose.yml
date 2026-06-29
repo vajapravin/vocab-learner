@@ -11,6 +11,12 @@ services:
     stdin_open: true
     tty: true
     command: bash
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
 
 volumes:
   vocab-venv:
