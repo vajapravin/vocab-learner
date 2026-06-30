@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     max_tokens: int = 4096
     request_timeout_seconds: float = 120.0
 
+    # Email (all optional; validated at EmailSender construction, not at load)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    email_from: str | None = None
+    email_to: str | None = None
+
 
 def load_settings() -> Settings:
     return Settings()
