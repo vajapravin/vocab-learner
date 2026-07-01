@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 from vocab_learner.config import (
@@ -85,6 +86,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a session Markdown file previously produced by `run`.",
     )
 
+    # `daily` subcommand
+    daily_parser = subparsers.add_parser(
+        "daily",
+        help=(
+            "Process today's dictionary image and email the result. "
+            "Designed to run as a scheduled task."
+        ),
+    )
+    daily_parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Process the file for a specific date instead of today.",
+    )
+    daily_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit with an error if the target file is missing. "
+            "Default (for scheduled runs) is silent skip."
+        ),
+    )
+
     return parser
 
 
@@ -107,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run(args, settings)
     if args.command == "send":
         return _cmd_send(args, settings)
+    if args.command == "daily":
+        return _cmd_daily(args, settings)
 
     # argparse's `required=True` on subparsers prevents this, but mypy
     # doesn't know that.
@@ -189,6 +216,86 @@ def _cmd_send(args: argparse.Namespace, settings: object) -> int:
 
     print(f"Sent: {args.session_file}")
     return EXIT_OK
+
+
+def _cmd_daily(args: argparse.Namespace, settings: Settings) -> int:
+    """
+    Process today's (or a specified date's) dictionary image and email
+    the resulting session. Designed to be triggered by an external scheduler.
+    """
+    target_date = _resolve_target_date(args.date)
+    if target_date is None:
+        print(
+            f"Invalid --date value: {args.date!r}. Expected YYYY-MM-DD.",
+            file=sys.stderr,
+        )
+        return EXIT_USER_ERROR
+
+    filename = f"IMG_{target_date.isoformat()}.jpg"
+    image_path = settings.inbox_dir / filename
+
+    log.info(
+        "daily_start",
+        target_date=target_date.isoformat(),
+        expected_file=str(image_path),
+    )
+
+    if not image_path.exists():
+        log.info("daily_file_not_found", path=str(image_path))
+        if args.strict:
+            print(f"File not found: {image_path}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        # Silent skip for scheduled runs
+        return EXIT_OK
+
+    # Run the pipeline (reuses the same code path as `run`)
+    try:
+        client = build_llm_client(settings)
+    except ValueError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return EXIT_USER_ERROR
+
+    pipeline = Pipeline(client=client, settings=settings)
+
+    try:
+        result = pipeline.run(image_path)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except (LLMError, RuntimeError, FileNotFoundError, ValueError) as e:
+        log.error("daily_pipeline_failed", error=str(e))
+        print(f"Pipeline error: {e}", file=sys.stderr)
+        return EXIT_PIPELINE_ERROR
+
+    # Email the result. Failure logs but doesn't fail the run.
+    try:
+        email_settings = EmailSettings.from_settings(settings)
+        sender = EmailSender(email_settings)
+        sender.send_file(result.output_path)
+    except EmailConfigError as e:
+        log.error("daily_email_config_error", error=str(e))
+        print(f"Email skipped: {e}", file=sys.stderr)
+    except EmailSendError as e:
+        log.error("daily_email_send_error", error=str(e))
+        print(f"Email delivery failed: {e}", file=sys.stderr)
+
+    log.info(
+        "daily_done",
+        session_id=result.session.session_id,
+        output=str(result.output_path),
+    )
+    print(result.output_path)
+    return EXIT_OK
+
+
+def _resolve_target_date(date_str: str | None) -> date | None:
+    """Return today's date if date_str is None, else parse it. None on parse failure."""
+    if date_str is None:
+        return datetime.now().date()
+    try:
+        return date.fromisoformat(date_str)
+    except ValueError:
+        return None
 
 
 if __name__ == "__main__":

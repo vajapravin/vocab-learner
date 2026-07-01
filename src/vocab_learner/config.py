@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     extraction_model: str = "gpt-4.1"
     teaching_model: str = "gpt-4.1"
     output_dir: Path = Path("./output")
+    inbox_dir: Path = Path("./inbox")
     fixtures_dir: Path = Path("./fixtures")
     prompts_dir: Path = Path("./prompts")
 
