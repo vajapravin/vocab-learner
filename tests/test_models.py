@@ -52,6 +52,20 @@ class TestVocabEntry:
         with pytest.raises(ValidationError):
             VocabEntry(headword="achieve", raw_block="x", sense_count=0)
 
+    def test_gujarati_meaning_optional_and_defaults_to_none(self) -> None:
+        """gujarati_meaning is optional (deferred Phase 2 field)."""
+        entry = VocabEntry(headword="achieve", raw_block="achieve, v.t. ...")
+        assert entry.gujarati_meaning is None
+
+    def test_gujarati_meaning_preserved_verbatim(self) -> None:
+        """When present, the field stores the source string as-is, no processing."""
+        entry = VocabEntry(
+            headword="achieve",
+            raw_block="achieve, v.t. પ્રાપ્ત કરવું; (2) સફળતાપૂર્વક પૂરું કરવું",
+            gujarati_meaning="પ્રાપ્ત કરવું; (2) સફળતાપૂર્વક પૂરું કરવું",
+        )
+        assert entry.gujarati_meaning == "પ્રાપ્ત કરવું; (2) સફળતાપૂર્વક પૂરું કરવું"
+
 
 class TestExtractionResult:
     def test_roundtrip_json(self) -> None:
