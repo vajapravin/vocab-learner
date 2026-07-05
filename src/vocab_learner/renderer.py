@@ -90,13 +90,26 @@ class MarkdownRenderer:
             f"**Pronunciation:** {pronunciation}",
             "",
             f"**Meaning:** {card.simple_meaning}",
-            "",
-            f'**Example:** _"{card.example_sentence}"_',
-            "",
-            f"**Where you'll see it:** {card.real_life_context}",
-            "",
-            f"**Memory hook:** {card.memory_hook}",
         ]
+
+        if card.gujarati_meaning:
+            lines.extend(
+                [
+                    "",
+                    f"**Gujarati:** {card.gujarati_meaning}",
+                ]
+            )
+
+        lines.extend(
+            [
+                "",
+                f'**Example:** _"{card.example_sentence}"_',
+                "",
+                f"**Where you'll see it:** {card.real_life_context}",
+                "",
+                f"**Memory hook:** {card.memory_hook}",
+            ]
+        )
 
         connections_block = self._render_connections(card.connections)
         if connections_block:
