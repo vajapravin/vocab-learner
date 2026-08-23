@@ -11,6 +11,14 @@ echo "→ mypy src"
 uv run mypy src
 
 echo "→ pytest"
+# Exit code 5 = "no tests collected", which is fine on a fresh project.
+set +e
 uv run pytest -q
+rc=$?
+set -e
+if [[ $rc -ne 0 && $rc -ne 5 ]]; then
+  echo "❌ pytest failed with exit code $rc"
+  exit $rc
+fi
 
 echo "✅ pre-push checks passed"
