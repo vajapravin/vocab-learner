@@ -13,7 +13,10 @@ from vocab_learner.config import Settings
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip any real env vars that could bleed into the test."""
     for key in list(os.environ):
-        if key.startswith("VOCAB_LEARNER_") or key == "ANTHROPIC_API_KEY":
+        if key.startswith("VOCAB_LEARNER_") or key in {
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+        }:
             monkeypatch.delenv(key, raising=False)
 
 
@@ -33,14 +36,7 @@ def test_settings_load_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(settings.output_dir, Path)
 
 
-def test_settings_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clean_env(monkeypatch)
-    with pytest.raises(ValueError):
-        Settings(_env_file=None)  # type: ignore[call-arg]
-
-
 def test_settings_no_keys_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keys are optional at Settings level; validated at client construction."""
     _clean_env(monkeypatch)
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.anthropic_api_key is None

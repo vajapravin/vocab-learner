@@ -40,4 +40,4 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
