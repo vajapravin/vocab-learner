@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ class FakeLLMClient:
 
     def __init__(self, canned_result: ExtractionResult) -> None:
         self.canned_result = canned_result
-        self.calls: list[dict] = []
+        self.calls: list[dict[str, Any]] = []
 
     def complete_structured(
         self,
