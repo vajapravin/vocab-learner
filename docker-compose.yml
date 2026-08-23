@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    container_name: vocab-learner
+    volumes:
+      - .:/workspace
+      - vocab-venv:/opt/venv
+    env_file:
+      - .env
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    command: bash
+
+volumes:
+  vocab-venv:
