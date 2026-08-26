@@ -67,19 +67,17 @@ class MarkdownRenderer:
                 f"{len(session.teaching_cards)} ({coverage_pct}%)_",
                 "",
                 story.body,
-                "",
-                "---",
             ]
         )
 
     def _render_words(self, cards: list[TeachingCard]) -> str:
         if not cards:
-            return "## Words\n\n_No teaching cards in this session._"
+            return "## Words\n\n_No teaching cards in this session._\n\n---"
 
         blocks: list[str] = ["## Words"]
         for i, card in enumerate(cards, start=1):
             blocks.append(self._render_card(i, card))
-        return "\n\n".join(blocks)
+        return "\n\n".join(blocks) + "\n\n---"
 
     def _render_card(self, index: int, card: TeachingCard) -> str:
         pronunciation = card.pronunciation_easy
