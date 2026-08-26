@@ -112,3 +112,19 @@ class Story(BaseModel):
         le=1.0,
         description="Fraction of the session's words that appear in the body.",
     )
+
+
+class Session(BaseModel):
+    """One full study session: extraction + teaching cards + story."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Unique identifier for this session, e.g. 'session_20260826_143012'.",
+    )
+    extraction: ExtractionResult
+    teaching_cards: list[TeachingCard]
+    story: Story
+    created_at: datetime = Field(default_factory=utcnow)
