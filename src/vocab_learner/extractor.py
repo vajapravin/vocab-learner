@@ -5,6 +5,7 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
+from core.utils import _utcnow
 from vocab_learner.config import Settings
 from vocab_learner.llm.protocol import LLMClient
 from vocab_learner.logging_setup import get_logger
@@ -53,11 +54,14 @@ class Extractor:
             max_tokens=self._settings.max_tokens,
         )
 
-        # Overwrite provenance fields with ground truth
+        # Overwrite provenance fields with ground truth.
+        # The LLM cannot know its own model ID, the local file path, or the true
+        # time — anything it emits for these must be discarded.
         result = result.model_copy(
             update={
                 "source_image_path": image_path,
                 "model_used": self._settings.extraction_model,
+                "extracted_at": _utcnow(),
             }
         )
 

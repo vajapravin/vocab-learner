@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+from core.utils import _utcnow
 
 
 class DerivedForm(BaseModel):

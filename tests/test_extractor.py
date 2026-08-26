@@ -129,10 +129,13 @@ def test_extract_overwrites_provenance_fields(tiny_jpeg: Path, project_dirs: Pat
     settings = _make_settings(project_dirs)
 
     ext = Extractor(client=fake, settings=settings)
+    before = datetime.now(UTC)
     result = ext.extract(tiny_jpeg)
+    after = datetime.now(UTC)
 
     assert result.source_image_path == tiny_jpeg
     assert result.model_used == settings.extraction_model
+    assert before <= result.extracted_at <= after
 
 
 def test_extract_raises_on_missing_file(project_dirs: Path) -> None:
