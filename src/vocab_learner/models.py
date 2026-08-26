@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.utils import _utcnow
+from vocab_learner.utils import utcnow
 
 
 class DerivedForm(BaseModel):
@@ -41,4 +41,4 @@ class ExtractionResult(BaseModel):
     page_identifier: str | None = None
     source_image_path: Path
     model_used: str
-    extracted_at: datetime = Field(default_factory=_utcnow)
+    extracted_at: datetime = Field(default_factory=utcnow)

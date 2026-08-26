@@ -5,7 +5,7 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from core.utils import _utcnow
+from vocab_learner.utils import utcnow
 from vocab_learner.config import Settings
 from vocab_learner.llm.protocol import LLMClient
 from vocab_learner.logging_setup import get_logger
@@ -61,7 +61,7 @@ class Extractor:
             update={
                 "source_image_path": image_path,
                 "model_used": self._settings.extraction_model,
-                "extracted_at": _utcnow(),
+                "extracted_at": utcnow(),
             }
         )
 
