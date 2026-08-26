@@ -1,4 +1,5 @@
 """Regression tests for stream separation in logging."""
+
 from __future__ import annotations
 
 import subprocess
