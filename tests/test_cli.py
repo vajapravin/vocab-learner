@@ -65,11 +65,13 @@ class TestParser:
         parser = build_parser()
         args = parser.parse_args(
             [
-                "--log-level", "DEBUG",
+                "--log-level",
+                "DEBUG",
                 "--quiet",
                 "run",
                 "page.jpg",
-                "--output-dir", "/tmp/out",
+                "--output-dir",
+                "/tmp/out",
             ]
         )
         assert args.command == "run"
@@ -170,6 +172,7 @@ class TestMain:
         lines = [ln for ln in captured.out.splitlines() if ln.strip()]
         assert lines == [str(fake_output)]
 
+
 class TestSendCommand:
     def test_send_missing_file_returns_user_error(
         self, clean_env: None, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -191,16 +194,21 @@ class TestSendCommand:
         assert ".md" in captured.err
 
     def test_send_missing_email_config_returns_user_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # Strip everything, then patch load_settings to also skip .env
         for _key in list(monkeypatch.__dict__.get("_setitem", [])):
             pass
         for key in (
-            "VOCAB_LEARNER_SMTP_HOST", "VOCAB_LEARNER_SMTP_USER",
-            "VOCAB_LEARNER_SMTP_PASSWORD", "VOCAB_LEARNER_EMAIL_FROM",
-            "VOCAB_LEARNER_EMAIL_TO", "ANTHROPIC_API_KEY",
+            "VOCAB_LEARNER_SMTP_HOST",
+            "VOCAB_LEARNER_SMTP_USER",
+            "VOCAB_LEARNER_SMTP_PASSWORD",
+            "VOCAB_LEARNER_EMAIL_FROM",
+            "VOCAB_LEARNER_EMAIL_TO",
+            "ANTHROPIC_API_KEY",
         ):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -208,11 +216,13 @@ class TestSendCommand:
 
         # Bypass .env file loading entirely for this test
         from vocab_learner.config import Settings
+
         def fake_load() -> Settings:
             return Settings(
                 openai_api_key="sk-test",
                 _env_file=None,
             )  # type: ignore[call-arg]
+
         monkeypatch.setattr("vocab_learner.cli.load_settings", fake_load)
 
         session_file = tmp_path / "session_test.md"

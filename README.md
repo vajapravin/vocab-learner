@@ -30,7 +30,7 @@ code .
 # Then: Cmd+Shift+P → "Dev Containers: Reopen in Container"
 
 # 4. Once inside the container, run against your image
-uv run vocab-learner path/to/dictionary_page.jpg
+uv run vocab-learner run path/to/dictionary_page.jpg
 ```
 
 Output lands in `output/session_YYYYMMDD_HHMMSS.md` — one Markdown file per run.
@@ -38,10 +38,18 @@ Output lands in `output/session_YYYYMMDD_HHMMSS.md` — one Markdown file per ru
 A single page (~30 words) takes ~3 minutes and costs ~$0.10–0.30 depending on provider and model. Runs are printed to stdout as a path so you can pipe:
 
 ```bash
-uv run vocab-learner page.jpg | xargs code
+uv run vocab-learner run page.jpg | xargs code
 ```
 
 ---
+
+### Emailing a session
+
+Once you have a generated `.md` file, email it as HTML:
+
+    uv run vocab-learner send output/session_20260826_203242.md
+
+Requires SMTP config in `.env` (see below). The email includes the rendered HTML in the body and the raw Markdown as an attachment.
 
 ## What It Does
 
