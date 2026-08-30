@@ -233,3 +233,8 @@ output/
 fixtures/cache/
 *.session.json
 
+
+# Private deployment docs — never commit
+docs/synology-*.md
+docs/*.sh
+docs/deployment-*.md
