@@ -258,3 +258,160 @@ class TestSendCommand:
         assert rc == EXIT_OK
         captured = capsys.readouterr()
         assert f"Sent: {session_file}" in captured.out
+
+
+class TestDailyCommand:
+    """Tests for the `daily` subcommand."""
+
+    def test_missing_file_silent_by_default(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Scheduled runs should not exit-with-error on missing files."""
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        monkeypatch.setenv("VOCAB_LEARNER_INBOX_DIR", str(inbox))
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("VOCAB_LEARNER_LLM_PROVIDER", "openai")
+
+        rc = main(["daily", "--date", "2026-01-15"])
+
+        assert rc == EXIT_OK
+        captured = capsys.readouterr()
+        # Nothing printed to stdout when file is missing
+        assert captured.out == ""
+
+    def test_missing_file_strict_returns_user_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Manual --strict invocations should exit-with-error on missing files."""
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        monkeypatch.setenv("VOCAB_LEARNER_INBOX_DIR", str(inbox))
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("VOCAB_LEARNER_LLM_PROVIDER", "openai")
+
+        rc = main(["daily", "--date", "2026-01-15", "--strict"])
+
+        assert rc == EXIT_USER_ERROR
+        captured = capsys.readouterr()
+        assert "not found" in captured.err.lower()
+
+    def test_invalid_date_returns_user_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("VOCAB_LEARNER_LLM_PROVIDER", "openai")
+
+        rc = main(["daily", "--date", "not-a-date"])
+
+        assert rc == EXIT_USER_ERROR
+        captured = capsys.readouterr()
+        assert "Invalid --date" in captured.err
+
+    def test_happy_path_processes_and_emails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """File exists → pipeline runs → email sent → exit 0."""
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        image = inbox / "IMG_2026-01-15.jpg"
+        image.write_bytes(b"\xff\xd8\xff")  # minimal JPEG magic bytes
+
+        output_dir = tmp_path / "output"
+
+        for key, val in {
+            "VOCAB_LEARNER_INBOX_DIR": str(inbox),
+            "VOCAB_LEARNER_OUTPUT_DIR": str(output_dir),
+            "OPENAI_API_KEY": "sk-test",
+            "VOCAB_LEARNER_LLM_PROVIDER": "openai",
+            "VOCAB_LEARNER_SMTP_HOST": "smtp.test.com",
+            "VOCAB_LEARNER_SMTP_USER": "u",
+            "VOCAB_LEARNER_SMTP_PASSWORD": "p",
+            "VOCAB_LEARNER_EMAIL_FROM": "from@test.com",
+            "VOCAB_LEARNER_EMAIL_TO": "to@test.com",
+        }.items():
+            monkeypatch.setenv(key, val)
+
+        # Mock the whole pipeline and SMTP
+        fake_output = output_dir / "session_test.md"
+        fake_output.parent.mkdir(parents=True, exist_ok=True)
+        fake_output.write_text("# Test Session")
+
+        fake_result = MagicMock()
+        fake_result.output_path = fake_output
+        fake_result.session.session_id = "session_test"
+
+        with (
+            patch("vocab_learner.cli.Pipeline") as mock_pipeline_cls,
+            patch("smtplib.SMTP") as smtp_class,
+        ):
+            mock_pipeline_cls.return_value.run.return_value = fake_result
+            smtp_instance = MagicMock()
+            smtp_class.return_value.__enter__.return_value = smtp_instance
+
+            rc = main(["daily", "--date", "2026-01-15"])
+
+        assert rc == EXIT_OK
+        captured = capsys.readouterr()
+        assert str(fake_output) in captured.out
+        smtp_instance.send_message.assert_called_once()
+
+    def test_email_failure_does_not_fail_the_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Pipeline succeeded → primary work is done → email failure is logged, not fatal."""
+        import smtplib
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        image = inbox / "IMG_2026-01-15.jpg"
+        image.write_bytes(b"\xff\xd8\xff")
+
+        for key, val in {
+            "VOCAB_LEARNER_INBOX_DIR": str(inbox),
+            "VOCAB_LEARNER_OUTPUT_DIR": str(tmp_path / "output"),
+            "OPENAI_API_KEY": "sk-test",
+            "VOCAB_LEARNER_LLM_PROVIDER": "openai",
+            "VOCAB_LEARNER_SMTP_HOST": "smtp.test.com",
+            "VOCAB_LEARNER_SMTP_USER": "u",
+            "VOCAB_LEARNER_SMTP_PASSWORD": "p",
+            "VOCAB_LEARNER_EMAIL_FROM": "from@test.com",
+            "VOCAB_LEARNER_EMAIL_TO": "to@test.com",
+        }.items():
+            monkeypatch.setenv(key, val)
+
+        fake_output = tmp_path / "output" / "session_test.md"
+        fake_output.parent.mkdir(parents=True, exist_ok=True)
+        fake_output.write_text("# Test")
+
+        fake_result = MagicMock()
+        fake_result.output_path = fake_output
+        fake_result.session.session_id = "session_test"
+
+        with (
+            patch("vocab_learner.cli.Pipeline") as mock_pipeline_cls,
+            patch("smtplib.SMTP") as smtp_class,
+        ):
+            mock_pipeline_cls.return_value.run.return_value = fake_result
+            smtp_class.side_effect = smtplib.SMTPException("mailbox full")
+
+            rc = main(["daily", "--date", "2026-01-15"])
+
+        # Pipeline succeeded → EXIT_OK even though email failed
+        assert rc == EXIT_OK
+        captured = capsys.readouterr()
+        assert "Email delivery failed" in captured.err
