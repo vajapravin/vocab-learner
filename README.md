@@ -90,3 +90,13 @@ One card from the run, as a taste:
 > - **Word family:** access, accessory, accessional
 >
 > **Try it yourself:** The accession of ___ to ___ changed everything.
+
+### Running as a scheduled job
+
+The `daily` subcommand is designed for use with an external scheduler (cron, systemd timer, Synology DSM Task Scheduler, etc.). It looks for `IMG_YYYY-MM-DD.jpg` in `VOCAB_LEARNER_INBOX_DIR` matching today's date, runs the pipeline, and emails the result.
+
+    uv run vocab-learner daily                      # process today's file
+    uv run vocab-learner daily --date 2026-08-27    # process a specific date
+    uv run vocab-learner daily --strict             # exit with error if missing
+
+The default (silent skip on missing file) is appropriate for scheduled runs. Use `--strict` for manual invocation when you want to be told if the file isn't there.
