@@ -141,6 +141,22 @@ class TestRender:
         assert story_pos != -1
         assert story_pos > last_card_pos, "Story should appear after the final word card"
 
+    def test_gujarati_meaning_rendered_when_present(self) -> None:
+        session = _make_session()
+        session.teaching_cards[0] = session.teaching_cards[0].model_copy(
+            update={"gujarati_meaning": "પ્રાપ્ત કરવું"}
+        )
+        renderer = MarkdownRenderer()
+        output = renderer.render(session)
+
+        assert "**Gujarati:** પ્રાપ્ત કરવું" in output
+
+    def test_gujarati_meaning_omitted_when_null(self) -> None:
+        renderer = MarkdownRenderer()
+        output = renderer.render(_make_session())  # cards have no Gujarati
+
+        assert "**Gujarati:**" not in output
+
 
 class TestRenderToFile:
     def test_writes_file_and_returns_path(self, tmp_path: Path) -> None:
