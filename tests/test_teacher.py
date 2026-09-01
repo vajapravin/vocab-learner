@@ -126,6 +126,52 @@ class TestTeachOne:
         assert "v.t." in prompt
         assert "achievement" in prompt  # derived form
 
+    def test_gujarati_meaning_passed_to_prompt(self, project_dirs: Path) -> None:
+        """The extracted Gujarati is included in the teaching prompt."""
+        fake = FakeLLMClient(_make_card("achieve"))
+        teacher = Teacher(client=fake, settings=_make_settings(project_dirs))
+
+        entry = VocabEntry(
+            headword="achieve",
+            raw_block="achieve, v.t. ...",
+            gujarati_meaning="પ્રાપ્ત કરવું",
+        )
+        teacher.teach_one(entry)
+
+        prompt = fake.calls[0]["user_prompt"]
+        assert "પ્રાપ્ત કરવું" in prompt
+        assert "copy this into the card unchanged" in prompt
+
+    def test_gujarati_meaning_absent_from_prompt_when_null(self, project_dirs: Path) -> None:
+        """No Gujarati line appears in the prompt when the field is null."""
+        fake = FakeLLMClient(_make_card("achieve"))
+        teacher = Teacher(client=fake, settings=_make_settings(project_dirs))
+
+        teacher.teach_one(_make_entry("achieve"))  # no gujarati_meaning
+
+        prompt = fake.calls[0]["user_prompt"]
+        assert "Gujarati meaning" not in prompt
+
+    def test_gujarati_meaning_overwritten_from_extraction(self, project_dirs: Path) -> None:
+        """If the LLM alters Gujarati, extraction's version wins."""
+        # LLM returns card with wrong Gujarati (paraphrased or reformatted)
+        drifted_card = _make_card("achieve")
+        drifted_card = drifted_card.model_copy(
+            update={"gujarati_meaning": "કંઈક પ્રાપ્ત કરવું"}  # "extra" text
+        )
+        fake = FakeLLMClient(drifted_card)
+        teacher = Teacher(client=fake, settings=_make_settings(project_dirs))
+
+        entry = VocabEntry(
+            headword="achieve",
+            raw_block="achieve, v.t. ...",
+            gujarati_meaning="પ્રાપ્ત કરવું",  # original source
+        )
+        card = teacher.teach_one(entry)
+
+        # Extraction's version wins, LLM's drift is discarded
+        assert card.gujarati_meaning == "પ્રાપ્ત કરવું"
+
 
 class TestTeachAll:
     def test_teaches_every_entry(self, project_dirs: Path) -> None:
