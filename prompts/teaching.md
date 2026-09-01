@@ -12,6 +12,8 @@ Given the input vocabulary entry, produce ONE teaching card with all nine fields
 
 - **`simple_meaning`** — one or two sentences of plain English. No dictionary-speak, no circular definitions. If a 12-year-old couldn't understand it, rewrite.
 
+- **`gujarati_meaning`** — if the input contains a "Gujarati meaning" line, copy that value into this field EXACTLY as provided, character for character. Do not translate, paraphrase, rewrite, or reformat. Do not add whitespace, remove punctuation, or "improve" spacing. If the input has no Gujarati meaning, use `null`. **You are not being asked to generate or verify Gujarati — only to pass through what the input gives you.**
+
 - **`part_of_speech`** — expand the abbreviation into a full readable form:
   - `n.` → "noun"
   - `v.t.` → "verb (transitive)"
