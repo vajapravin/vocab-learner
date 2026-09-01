@@ -26,6 +26,15 @@ class VocabEntry(BaseModel):
         default=None,
         description="Parenthesized transliteration as printed in the dictionary.",
     )
+    gujarati_meaning: str | None = Field(
+        default=None,
+        description=(
+            "The Gujarati definition(s) as printed in the source dictionary. "
+            "Preserved verbatim from the physical page, semicolon-separated "
+            "across senses. Null when not visible or when extraction cannot "
+            "reliably read it."
+        ),
+    )
     derived_forms: list[DerivedForm] = Field(default_factory=list)
     sense_count: int = Field(default=1, ge=1)
     raw_block: str = Field(
