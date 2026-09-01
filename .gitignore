@@ -230,6 +230,7 @@ pyrightconfig.json
 
 # Project
 output/
+outbox/
 fixtures/cache/
 *.session.json
 
