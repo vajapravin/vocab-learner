@@ -1,4 +1,8 @@
-"""30 Hugging Face models registry with capabilities and rate limit specifications."""
+"""Hugging Face models registry.
+
+Free tier models are kept active by default. Heavy and paid inference models
+requiring pre-paid credits (HTTP 402) are commented out below.
+"""
 
 from __future__ import annotations
 
@@ -17,48 +21,13 @@ class ModelInfo:
     default_daily_limit: int = 500000
 
 
-# Exactly 30 distinct live models available on Hugging Face router:
-# 15 Vision-capable models (modalities: ['text', 'image'])
-# 15 Text-specialized models (modalities: ['text'])
+# ==============================================================================
+# ACTIVE FREE TIER HUGGING FACE MODELS
+# ==============================================================================
 HUGGINGFACE_MODELS_POOL: list[ModelInfo] = [
-    # --- Vision Models (supports both image extraction and text) ---
-    ModelInfo(
-        model_id="meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-        supports_vision=True,
-        context_length=1048576,
-    ),
-    ModelInfo(
-        model_id="Qwen/Qwen2.5-VL-72B-Instruct",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="Qwen/Qwen3-VL-30B-A3B-Instruct",
-        supports_vision=True,
-        context_length=131072,
-    ),
+    # --- Free Vision Models (supports both image extraction and text) ---
     ModelInfo(
         model_id="Qwen/Qwen3.5-9B",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="Qwen/Qwen3.5-27B",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="deepseek-ai/DeepSeek-V4.1-Flash",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
         supports_vision=True,
         context_length=131072,
     ),
@@ -68,22 +37,7 @@ HUGGINGFACE_MODELS_POOL: list[ModelInfo] = [
         context_length=131072,
     ),
     ModelInfo(
-        model_id="google/gemma-3-12b-it",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="google/gemma-3-27b-it",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="CohereLabs/aya-vision-32b",
-        supports_vision=True,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="CohereLabs/command-a-vision-07-2025",
+        model_id="deepseek-ai/DeepSeek-V4.1-Flash",
         supports_vision=True,
         context_length=131072,
     ),
@@ -93,33 +47,18 @@ HUGGINGFACE_MODELS_POOL: list[ModelInfo] = [
         context_length=131072,
     ),
     ModelInfo(
-        model_id="zai-org/GLM-5.3-Flash",
+        model_id="Qwen/Qwen2.5-VL-7B-Instruct",
         supports_vision=True,
         context_length=131072,
     ),
-    # --- Text Models ---
+    ModelInfo(
+        model_id="microsoft/Phi-3.5-vision-instruct",
+        supports_vision=True,
+        context_length=131072,
+    ),
+    # --- Free Text Models ---
     ModelInfo(
         model_id="meta-llama/Llama-3.1-8B-Instruct",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="meta-llama/Llama-3.3-70B-Instruct",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="NousResearch/Hermes-3-Llama-3.1-70B",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="Qwen/Qwen2.5-72B-Instruct",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="Qwen/Qwen2.5-Coder-32B-Instruct",
         supports_vision=False,
         context_length=131072,
     ),
@@ -134,7 +73,7 @@ HUGGINGFACE_MODELS_POOL: list[ModelInfo] = [
         context_length=131072,
     ),
     ModelInfo(
-        model_id="Qwen/Qwen3-14B",
+        model_id="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
         supports_vision=False,
         context_length=131072,
     ),
@@ -144,35 +83,116 @@ HUGGINGFACE_MODELS_POOL: list[ModelInfo] = [
         context_length=131072,
     ),
     ModelInfo(
-        model_id="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="deepseek-ai/DeepSeek-V3",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
-        model_id="deepseek-ai/DeepSeek-R1",
-        supports_vision=False,
-        context_length=131072,
-    ),
-    ModelInfo(
         model_id="microsoft/phi-4",
         supports_vision=False,
         context_length=131072,
     ),
-    ModelInfo(
-        model_id="CohereLabs/c4ai-command-r-08-2024",
-        supports_vision=False,
-        context_length=131072,
-    ),
+    # ==========================================================================
+    # PAID / COMMERCIAL MODELS (Require pre-paid credits on Hugging Face router)
+    # Uncomment if your Hugging Face account has pre-paid credits or PRO subscription.
+    # ==========================================================================
+    # # --- Paid Vision Models (HTTP 402 without pre-paid credits) ---
+    # ModelInfo(
+    #     model_id="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+    #     supports_vision=True,
+    #     context_length=1048576,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen2.5-VL-72B-Instruct",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen3-VL-30B-A3B-Instruct",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen3.5-27B",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="google/gemma-3-12b-it",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="google/gemma-3-27b-it",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="CohereLabs/aya-vision-32b",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="CohereLabs/command-a-vision-07-2025",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="zai-org/GLM-5.3-Flash",
+    #     supports_vision=True,
+    #     context_length=131072,
+    # ),
+    # # --- Paid Text Models (HTTP 402 without pre-paid credits) ---
+    # ModelInfo(
+    #     model_id="meta-llama/Llama-3.3-70B-Instruct",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="NousResearch/Hermes-3-Llama-3.1-70B",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen2.5-72B-Instruct",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen2.5-Coder-32B-Instruct",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="Qwen/Qwen3-14B",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="deepseek-ai/DeepSeek-V3",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="deepseek-ai/DeepSeek-R1",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
+    # ModelInfo(
+    #     model_id="CohereLabs/c4ai-command-r-08-2024",
+    #     supports_vision=False,
+    #     context_length=131072,
+    # ),
 ]
 
 _POOL_BY_ID = {m.model_id: m for m in HUGGINGFACE_MODELS_POOL}
