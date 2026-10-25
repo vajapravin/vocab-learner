@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     sqlite_db_path: Path = Path("./output/llm_usage.db")
     tpm_limit: int = 30000
     rpm_limit: int = 30
+    rpd_limit: int = 1000
     daily_token_limit: int = 500000
 
     log_level: str = "INFO"

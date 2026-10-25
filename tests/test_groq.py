@@ -161,3 +161,72 @@ def test_groq_clean_json_markdown_fences() -> None:
     raw = '```json\n{\n  "name": "clean",\n  "score": 50\n}\n```'
     cleaned = GroqClient._clean_json(raw)
     assert cleaned == '{\n  "name": "clean",\n  "score": 50\n}'
+
+
+def test_groq_per_model_limits_compound(tmp_path: Path) -> None:
+    pool = get_groq_model_pool()
+    compound = next((m for m in pool if m.model_id == "groq/compound"), None)
+    assert compound is not None
+    assert compound.rpm_limit == 30
+    assert compound.rpd_limit == 250
+    assert compound.tpm_limit == 70000
+    assert compound.tpd_limit == 500000
+
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_compound.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+
+    # Check registered limits in SQLite
+    limits = client._tracker.get_or_create_limits("groq/compound")
+    assert limits["rpm_limit"] == 30
+    assert limits["rpd_limit"] == 250
+    assert limits["tpm_limit"] == 70000
+    assert limits["tpd_limit"] == 500000
+
+
+def test_groq_rpd_limit_exceeded_switches_model(tmp_path: Path) -> None:
+    """When a model exceeds its daily request limit (RPD), it switches to an available model."""
+    import time
+
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_rpd.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+
+    # groq/compound has RPD=250. Let's record 250 requests for it in the last 24 hours.
+    now = time.time()
+    for i in range(250):
+        client._tracker.record_usage(
+            model_id="groq/compound",
+            key_hash="hash",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+            now=now - (i * 10),
+        )
+
+    # Request 251 should fail RPD limit
+    is_ok, reason = client._tracker.is_within_limit("groq/compound", now=now)
+    assert is_ok is False
+    assert "RPD limit exceeded" in str(reason)
+
+    # When candidate models are [groq/compound, llama-3.1-8b-instant], selection switches!
+    chosen, switched = client._tracker.select_available_model(
+        candidate_models=["groq/compound", "llama-3.1-8b-instant"],
+        preferred_model="groq/compound",
+        now=now,
+    )
+    assert chosen == "llama-3.1-8b-instant"
+    assert switched is True
+
+    # Usage summary verification
+    usage = client._tracker.get_model_usage("groq/compound", now=now)
+    assert usage["rpd_used"] == 250
+    assert usage["rpd_limit"] == 250
