@@ -438,7 +438,7 @@ class TokenTracker:
         ]
         wait_times.sort(key=lambda item: item[1])
         fallback = wait_times[0][0] if wait_times else candidate_models[0]
-        min_wait = round(wait_times[0][1], 2) if wait_times else 0.0
+        min_wait = round(wait_times[0][1] + 5.0, 2) if wait_times else 5.0
         log.warning(
             "all_llms_limit_exceeded_using_fallback",
             fallback=fallback,
