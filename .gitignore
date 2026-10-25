@@ -239,3 +239,7 @@ fixtures/cache/
 docs/synology-*.md
 docs/*.sh
 docs/deployment-*.md
+
+# Local models
+models/
+*.gguf

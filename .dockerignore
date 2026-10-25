@@ -1,0 +1,24 @@
+# Ignore large local model binaries from Docker image build context
+models/
+*.gguf
+
+# Python & virtual environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git/
+.gitignore
+
+# Output & cache
+output/
+outbox/
+inbox/
+fixtures/cache/
+*.session.json
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

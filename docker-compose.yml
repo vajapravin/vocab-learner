@@ -5,6 +5,7 @@ services:
     volumes:
       - .:/workspace
       - vocab-venv:/opt/venv
+      - ./models:/workspace/models:ro
     env_file:
       - .env
     working_dir: /workspace

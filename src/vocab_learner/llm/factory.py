@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from vocab_learner.config import Settings
 from vocab_learner.llm.anthropic_client import AnthropicClient
+from vocab_learner.llm.local_client import LocalLlamaClient
 from vocab_learner.llm.openai_client import OpenAIClient
 from vocab_learner.llm.protocol import LLMClient
 
@@ -23,5 +24,12 @@ def build_llm_client(settings: Settings) -> LLMClient:
             api_key=settings.openai_api_key,
             timeout_seconds=settings.request_timeout_seconds,
         )
-    # mypy: Literal["anthropic", "openai"] is exhausted; this is unreachable
+    if settings.llm_provider == "local":
+        return LocalLlamaClient(
+            model_path=settings.local_model_path,
+            n_gpu_layers=settings.local_gpu_layers,
+            n_ctx=settings.local_context_length,
+            tesseract_cmd=settings.tesseract_cmd,
+        )
+    # mypy: Literal["anthropic", "openai", "local"] is exhausted; this is unreachable
     raise ValueError(f"Unknown provider: {settings.llm_provider}")

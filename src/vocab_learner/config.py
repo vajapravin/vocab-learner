@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Provider = Literal["anthropic", "openai"]
+Provider = Literal["anthropic", "openai", "local"]
 
 
 class Settings(BaseSettings):
@@ -21,12 +21,18 @@ class Settings(BaseSettings):
     )
 
     # Provider selection
-    llm_provider: Provider = "openai"
+    llm_provider: Provider = "local"
 
     # Provider-specific keys (each optional; the selected provider's key is required
     # at client-construction time, not at settings-load time)
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+
+    # Local GGUF model settings (llama-cpp-python)
+    local_model_path: Path = Path("./models/Qwen2.5-7B-Instruct-Q4_K_M.gguf")
+    local_gpu_layers: int = -1  # Offload all layers to Metal GPU on macOS
+    local_context_length: int = 4096
+    tesseract_cmd: str = "tesseract"
 
     log_level: str = "INFO"
     extraction_model: str = "gpt-4.1"
