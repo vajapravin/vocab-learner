@@ -269,20 +269,32 @@ class HuggingFaceClient:
                 continue
 
             except openai.APIStatusError as e:
-                # Catch 429 Too Many Requests or billing/quota error
-                if e.status_code == 429 or "rate" in str(e).lower() or "limit" in str(e).lower():
+                # Catch 429 Too Many Requests, 402 Payment Required/no credits, or quota/limit error
+                err_text = str(e).lower()
+                is_quota_or_credits = (
+                    e.status_code in {402, 429}
+                    or "credit" in err_text
+                    or "payment" in err_text
+                    or "rate" in err_text
+                    or "limit" in err_text
+                    or "quota" in err_text
+                )
+                if is_quota_or_credits:
                     log.warning(
-                        "llm_status_429_switching_llm",
+                        "llm_credits_or_rate_limit_exceeded_switching_llm",
                         model=selected_model,
                         error=str(e),
                         status_code=e.status_code,
                     )
+                    # For 402 (no credits), mark longer cooldown (1 hour)
+                    cooldown = 3600.0 if e.status_code == 402 or "credit" in err_text else 60.0
                     self._tracker.mark_cooldown(
                         model_id=selected_model,
-                        cooldown_seconds=60.0,
+                        cooldown_seconds=cooldown,
                         error_message=str(e),
                     )
                     continue
+
                 # Other non-rate-limit API error
                 log.error("llm_api_status_error", model=selected_model, error=str(e))
                 raise LLMError(f"Hugging Face API error ({selected_model}): {e}") from e
@@ -294,11 +306,18 @@ class HuggingFaceClient:
             except Exception as e:
                 # Network or unexpected error: mark cooldown and attempt switch
                 err_str = str(e).lower()
-                if "429" in err_str or "quota" in err_str or "rate limit" in err_str:
+                if (
+                    "429" in err_str
+                    or "402" in err_str
+                    or "credit" in err_str
+                    or "quota" in err_str
+                    or "rate limit" in err_str
+                ):
                     log.warning("llm_error_rate_limited", model=selected_model, error=str(e))
+                    cooldown = 3600.0 if "402" in err_str or "credit" in err_str else 60.0
                     self._tracker.mark_cooldown(
                         model_id=selected_model,
-                        cooldown_seconds=60.0,
+                        cooldown_seconds=cooldown,
                         error_message=str(e),
                     )
                     continue
@@ -306,8 +325,9 @@ class HuggingFaceClient:
                 raise LLMError(f"Hugging Face unexpected error ({selected_model}): {e}") from e
 
         raise LLMError(
-            f"All {max_attempts} attempted Hugging Face models exceeded limits or failed. "
-            f"Attempted models: {list(tried_models)}"
+            f"All {max_attempts} attempted Hugging Face models exceeded limits, require credits, "
+            f"or failed. Attempted models: {list(tried_models)}. "
+            "Please check that models in models_registry.py are free, or add pre-paid credits."
         )
 
     def _call_model(

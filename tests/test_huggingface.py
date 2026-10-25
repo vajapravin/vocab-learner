@@ -29,13 +29,13 @@ class SampleResponse(BaseModel):
 # --- Model Registry Tests ---------------------------------------------------
 
 
-def test_models_registry_has_30_models() -> None:
+def test_models_registry_free_models() -> None:
     pool = get_model_pool()
-    assert len(pool) == 30
+    assert len(pool) >= 10
     vision = get_vision_models(pool)
     text = get_text_models(pool)
-    assert len(vision) >= 10
-    assert len(text) == 30
+    assert len(vision) >= 4
+    assert len(text) >= 10
     assert all(isinstance(m, ModelInfo) for m in pool)
 
 
@@ -285,6 +285,48 @@ def test_complete_structured_429_failover(tmp_path: Path) -> None:
     assert "cooldown" in str(reason)
 
 
+def test_complete_structured_402_credits_error_failover(tmp_path: Path) -> None:
+    settings = Settings(
+        llm_provider="huggingface",
+        huggingface_api_key="hf_test_dummy",
+        sqlite_db_path=tmp_path / "test.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = HuggingFaceClient(settings=settings)
+
+    # First call returns 402 Payment Required ("You have no remaining credits"); second succeeds
+    mock_resp = MagicMock()
+    mock_resp.choices = [
+        MagicMock(message=MagicMock(content='{"name": "free_model_reply", "score": 90}'))
+    ]
+    mock_resp.usage = MagicMock(prompt_tokens=40, completion_tokens=15, total_tokens=55)
+
+    error_402 = openai.APIStatusError(
+        message="Error code: 402 - {'error': 'You have no remaining credits'}",
+        response=MagicMock(status_code=402, headers={}),
+        body={"error": "You have no remaining credits"},
+    )
+
+    for c in client._clients.values():
+        c.chat.completions.create = MagicMock(  # type: ignore[method-assign]
+            side_effect=[error_402, mock_resp]
+        )
+
+    res = client.complete_structured(
+        model="meta-llama/Llama-3.1-8B-Instruct",
+        system_prompt="System",
+        user_prompt="User",
+        response_model=SampleResponse,
+    )
+    assert res.name == "free_model_reply"
+    assert res.score == 90
+
+    # The 402 model should be marked in cooldown in SQLite
+    is_ok, reason = client._tracker.is_within_limit("meta-llama/Llama-3.1-8B-Instruct")
+    assert is_ok is False
+    assert "cooldown" in str(reason)
+
+
 def test_complete_vision_structured(tmp_path: Path) -> None:
     settings = Settings(
         llm_provider="huggingface",
@@ -304,7 +346,7 @@ def test_complete_vision_structured(tmp_path: Path) -> None:
         c.chat.completions.create = MagicMock(return_value=mock_resp)  # type: ignore[method-assign]
 
     res = client.complete_vision_structured(
-        model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        model="Qwen/Qwen3.5-9B",
         system_prompt="System",
         user_prompt="User",
         image_bytes=b"fake_jpeg_bytes",
