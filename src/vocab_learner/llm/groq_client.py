@@ -67,21 +67,6 @@ class GroqClient:
             tpd_limit=settings.daily_token_limit,
         )
 
-        # Groq models pool
-        self._models_pool = models_pool or get_groq_model_pool()
-        self._vision_models = [m.model_id for m in get_groq_vision_models(self._models_pool)]
-        self._text_models = [m.model_id for m in get_groq_text_models(self._models_pool)]
-
-        # Register per-model limits in SQLite
-        for m in self._models_pool:
-            self._tracker.register_model_limits(
-                model_id=m.model_id,
-                rpm_limit=m.rpm_limit,
-                rpd_limit=m.rpd_limit,
-                tpm_limit=m.tpm_limit,
-                tpd_limit=m.tpd_limit,
-            )
-
         # Map of active OpenAI clients (max_retries=0 enables instant model switching)
         self._clients: dict[str, openai.OpenAI] = {
             key: openai.OpenAI(
@@ -92,6 +77,32 @@ class GroqClient:
             )
             for key in self._keys
         }
+
+        # Groq models pool - dynamically filter by active models on the Groq account
+        self._models_pool = models_pool or get_groq_model_pool()
+        if models_pool is None:
+            primary_client = next(iter(self._clients.values()))
+            try:
+                active_ids = {m.id for m in primary_client.models.list().data}
+                filtered = [m for m in self._models_pool if m.model_id in active_ids]
+                if filtered:
+                    self._models_pool = filtered
+            except Exception as e:
+                log.warning("groq_models_list_filter_skipped", error=str(e))
+
+        self._vision_models = [m.model_id for m in get_groq_vision_models(self._models_pool)]
+        self._text_models = [m.model_id for m in get_groq_text_models(self._models_pool)]
+
+        # Register per-model limits in SQLite and unblock any false-alarm cooldowns
+        for m in self._models_pool:
+            self._tracker.register_model_limits(
+                model_id=m.model_id,
+                rpm_limit=m.rpm_limit,
+                rpd_limit=m.rpd_limit,
+                tpm_limit=m.tpm_limit,
+                tpd_limit=m.tpd_limit,
+            )
+            self._tracker.clear_cooldown(m.model_id)
 
     @staticmethod
     def _load_keys(settings: Settings) -> list[str]:
@@ -207,16 +218,16 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Realistic token estimation: image (~1200) + prompt tokens + expected completion
-        expected_output = min(max_tokens, 2048)
-        estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + expected_output
+        # Groq enforces 1000 OTPM on qwen vision; clamp max_tokens <= 800 to avoid OTPM 429
+        clamped_max_tokens = min(max_tokens, 800)
+        estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + clamped_max_tokens
 
         return self._execute_with_switching(
             requested_model=model,
             system_prompt=system_prompt,
             user_content=[image_part, text_part],
             response_model=response_model,
-            max_tokens=max_tokens,
+            max_tokens=clamped_max_tokens,
             is_vision=True,
             estimated_tokens=estimated,
         )
@@ -296,17 +307,37 @@ class GroqClient:
                 return result
 
             except openai.RateLimitError as e:
+                err_msg = str(e)
                 log.warning(
                     "groq_rate_limit_exceeded_switching_model",
                     model=selected_model,
-                    error=str(e),
+                    error=err_msg,
                     attempt=attempt + 1,
                 )
+                # If only 1 candidate model and retry delay is specified, wait and retry
+                retry_match = re.search(r"try again in ([\d\.]+)s", err_msg.lower())
+                retry_wait = float(retry_match.group(1)) if retry_match else None
+                if (
+                    len(candidate_models) == 1
+                    and retry_wait is not None
+                    and retry_wait <= 30.0
+                    and attempt < (max_attempts - 1)
+                ):
+                    log.info(
+                        "groq_waiting_for_rate_limit_reset",
+                        model=selected_model,
+                        wait_seconds=retry_wait,
+                    )
+                    import time
+
+                    time.sleep(retry_wait + 1.0)
+                    continue
+
                 # Mark model in cooldown in SQLite so subsequent requests immediately skip it
                 self._tracker.mark_cooldown(
                     model_id=selected_model,
                     cooldown_seconds=60.0,
-                    error_message=str(e),
+                    error_message=err_msg,
                 )
                 continue
 
@@ -387,16 +418,22 @@ class GroqClient:
 
         log.warning("groq_validation_failed_first_attempt", model=model, error=str(first_error))
 
+        repair_text = (
+            "Your previous JSON response failed validation:\n"
+            f"Previous output: {raw_text}\n\n"
+            f"Validation error: {first_error}\n\n"
+            "Return ONLY the corrected JSON object matching the required schema. "
+            "No markdown fences."
+        )
         repair_part: ChatCompletionContentPartTextParam = {
             "type": "text",
-            "text": (
-                "Your previous response could not be parsed as valid JSON "
-                "matching the required schema. Error:\n\n"
-                f"{first_error}\n\n"
-                "Return ONLY the corrected JSON object. No prose, no markdown fences."
-            ),
+            "text": repair_text,
         }
-        repair_content: list[UserContentPart] = [*user_content, repair_part]
+        # Keep only text parts from user_content to avoid re-uploading heavy images against ITPM
+        text_only_parts: list[UserContentPart] = [
+            p for p in user_content if p.get("type") == "text"
+        ]
+        repair_content: list[UserContentPart] = [*text_only_parts, repair_part]
         raw_text, repair_usage = self._send(
             client=client,
             model=model,
@@ -493,6 +530,19 @@ class GroqClient:
 
     def _try_parse(self, raw: str, response_model: type[T]) -> tuple[T | None, Exception | None]:
         cleaned = self._clean_json(raw)
+        # Attempt direct JSON deserialization and metadata cleanup
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, dict):
+                # Strip schema metadata keys that some LLMs inadvertently copy
+                for meta_key in ("required", "$defs", "$schema"):
+                    if meta_key in data and meta_key not in response_model.model_fields:
+                        data.pop(meta_key, None)
+                parsed = response_model.model_validate(data)
+                return parsed, None
+        except Exception:
+            pass
+
         try:
             parsed = response_model.model_validate_json(cleaned)
             return parsed, None
@@ -500,8 +550,13 @@ class GroqClient:
             match = re.search(r"(\{.*\})", cleaned, re.DOTALL)
             if match:
                 try:
-                    parsed = response_model.model_validate_json(match.group(1))
-                    return parsed, None
+                    data = json.loads(match.group(1))
+                    if isinstance(data, dict):
+                        for meta_key in ("required", "$defs", "$schema"):
+                            if meta_key in data and meta_key not in response_model.model_fields:
+                                data.pop(meta_key, None)
+                        parsed = response_model.model_validate(data)
+                        return parsed, None
                 except Exception:
                     pass
             return None, e

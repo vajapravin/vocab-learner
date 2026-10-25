@@ -38,7 +38,7 @@ class VocabEntry(BaseModel):
     derived_forms: list[DerivedForm] = Field(default_factory=list)
     sense_count: int = Field(default=1, ge=1)
     raw_block: str = Field(
-        ...,
+        default="",
         description="Full raw text of this entry block from the source page.",
     )
 
@@ -48,8 +48,8 @@ class ExtractionResult(BaseModel):
 
     entries: list[VocabEntry]
     page_identifier: str | None = None
-    source_image_path: Path
-    model_used: str
+    source_image_path: Path = Field(default_factory=lambda: Path(""))
+    model_used: str = ""
     extracted_at: datetime = Field(default_factory=utcnow)
 
 
