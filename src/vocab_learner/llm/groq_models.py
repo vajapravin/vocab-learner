@@ -12,141 +12,84 @@ class GroqModelInfo:
     model_id: str
     supports_vision: bool
     context_length: int = 131072
-    rpm_limit: int = 30  # requests per minute
-    rpd_limit: int = 1000  # requests per day (daily equivalent of RPM)
-    tpm_limit: int = 30000  # tokens per minute
-    tpd_limit: int = 500000  # tokens per day (daily equivalent of TPM)
-
-    # Backward compatibility properties
-    @property
-    def default_rpm_limit(self) -> int:
-        return self.rpm_limit
-
-    @property
-    def default_rpd_limit(self) -> int:
-        return self.rpd_limit
-
-    @property
-    def default_tpm_limit(self) -> int:
-        return self.tpm_limit
-
-    @property
-    def default_daily_limit(self) -> int:
-        return self.tpd_limit
+    default_tpm_limit: int = 30000
+    default_rpm_limit: int = 30
+    default_daily_limit: int = 500000
 
 
-# Curated catalog of Groq models (vision and text) with per-model limits
+# Curated catalog of Groq models (vision and text)
 GROQ_MODELS_POOL: list[GroqModelInfo] = [
-    # --- Compound / Agentic Models (Higher TPM, tighter daily RPD limit on free tier) ---
-    GroqModelInfo(
-        model_id="groq/compound",
-        supports_vision=False,
-        context_length=131072,
-        rpm_limit=30,
-        rpd_limit=250,
-        tpm_limit=70000,
-        tpd_limit=500000,
-    ),
-    GroqModelInfo(
-        model_id="groq/compound-mini",
-        supports_vision=False,
-        context_length=131072,
-        rpm_limit=30,
-        rpd_limit=250,
-        tpm_limit=70000,
-        tpd_limit=500000,
-    ),
     # --- Vision Models (Multimodal: image + text input) ---
-    GroqModelInfo(
-        model_id="qwen/qwen3.8-27b",
-        supports_vision=True,
-        context_length=131072,
-        rpm_limit=30,
-        rpd_limit=1000,
-        tpm_limit=30000,
-        tpd_limit=200000,
-    ),
     GroqModelInfo(
         model_id="llama-3.2-11b-vision-preview",
         supports_vision=True,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=7000,
-        tpm_limit=7000,
-        tpd_limit=500000,
+        default_tpm_limit=7000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="llama-3.2-90b-vision-preview",
         supports_vision=True,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=7000,
-        tpm_limit=7000,
-        tpd_limit=500000,
+        default_tpm_limit=7000,
+        default_rpm_limit=30,
+    ),
+    GroqModelInfo(
+        model_id="qwen/qwen3.8-27b",
+        supports_vision=True,
+        context_length=131072,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     # --- Text Models ---
     GroqModelInfo(
         model_id="llama-3.3-70b-versatile",
         supports_vision=False,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=1000,
-        tpm_limit=12000,
-        tpd_limit=100000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="llama-3.1-8b-instant",
         supports_vision=False,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=14400,
-        tpm_limit=6000,
-        tpd_limit=500000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="deepseek-r1-distill-llama-70b",
         supports_vision=False,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=1000,
-        tpm_limit=8000,
-        tpd_limit=100000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="mixtral-8x7b-32768",
         supports_vision=False,
         context_length=32768,
-        rpm_limit=30,
-        rpd_limit=14400,
-        tpm_limit=30000,
-        tpd_limit=500000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="gemma2-9b-it",
         supports_vision=False,
         context_length=8192,
-        rpm_limit=30,
-        rpd_limit=14400,
-        tpm_limit=15000,
-        tpd_limit=500000,
+        default_tpm_limit=15000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="openai/gpt-oss-120b",
         supports_vision=False,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=1000,
-        tpm_limit=30000,
-        tpd_limit=200000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
     GroqModelInfo(
         model_id="openai/gpt-oss-20b",
         supports_vision=False,
         context_length=131072,
-        rpm_limit=30,
-        rpd_limit=14400,
-        tpm_limit=30000,
-        tpd_limit=500000,
+        default_tpm_limit=30000,
+        default_rpm_limit=30,
     ),
 ]
 

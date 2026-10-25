@@ -63,8 +63,7 @@ class GroqClient:
             db_path=settings.sqlite_db_path,
             tpm_limit=settings.tpm_limit,
             rpm_limit=settings.rpm_limit,
-            rpd_limit=settings.rpd_limit,
-            tpd_limit=settings.daily_token_limit,
+            daily_limit=settings.daily_token_limit,
         )
 
         # Groq models pool
@@ -72,24 +71,9 @@ class GroqClient:
         self._vision_models = [m.model_id for m in get_groq_vision_models(self._models_pool)]
         self._text_models = [m.model_id for m in get_groq_text_models(self._models_pool)]
 
-        # Register per-model limits in SQLite
-        for m in self._models_pool:
-            self._tracker.register_model_limits(
-                model_id=m.model_id,
-                rpm_limit=m.rpm_limit,
-                rpd_limit=m.rpd_limit,
-                tpm_limit=m.tpm_limit,
-                tpd_limit=m.tpd_limit,
-            )
-
-        # Map of active OpenAI clients (max_retries=0 enables instant model switching)
+        # Map of active OpenAI clients keyed by API key
         self._clients: dict[str, openai.OpenAI] = {
-            key: openai.OpenAI(
-                base_url=self._base_url,
-                api_key=key,
-                timeout=self._timeout,
-                max_retries=0,
-            )
+            key: openai.OpenAI(base_url=self._base_url, api_key=key, timeout=self._timeout)
             for key in self._keys
         }
 
@@ -144,9 +128,6 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Realistic token estimation: prompt tokens + expected completion tokens (min 2048)
-        expected_output = min(max_tokens, 2048)
-        estimated = (len(system_prompt) + len(user_prompt)) // 4 + expected_output
         return self._execute_with_switching(
             requested_model=model,
             system_prompt=system_prompt,
@@ -154,35 +135,8 @@ class GroqClient:
             response_model=response_model,
             max_tokens=max_tokens,
             is_vision=False,
-            estimated_tokens=estimated,
+            estimated_tokens=(len(system_prompt) + len(user_prompt)) // 4 + max_tokens,
         )
-
-    @staticmethod
-    def _optimize_image_for_groq(image_bytes: bytes, max_dim: int = 1600) -> tuple[bytes, str]:
-        """
-        Resize and compress large images to prevent HTTP 413 (Payload Too Large).
-        Ensures max dimension <= max_dim and payload size stays well below Groq API limits.
-        """
-        try:
-            import io
-
-            from PIL import Image
-
-            img: Image.Image = Image.open(io.BytesIO(image_bytes))
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-
-            if max(img.size) > max_dim or len(image_bytes) > 1_500_000:
-                if max(img.size) > max_dim:
-                    ratio = max_dim / max(img.size)
-                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=85)
-                return buf.getvalue(), "image/jpeg"
-        except Exception as e:
-            log.warning("image_optimization_skipped", error=str(e))
-        return image_bytes, "image/jpeg"
 
     def complete_vision_structured(
         self,
@@ -195,9 +149,8 @@ class GroqClient:
         response_model: type[T],
         max_tokens: int = 4096,
     ) -> T:
-        optimized_bytes, media_type = self._optimize_image_for_groq(image_bytes)
-        b64 = base64.standard_b64encode(optimized_bytes).decode("ascii")
-        data_url = f"data:{media_type};base64,{b64}"
+        b64 = base64.standard_b64encode(image_bytes).decode("ascii")
+        data_url = f"data:{image_media_type};base64,{b64}"
 
         image_part: ChatCompletionContentPartImageParam = {
             "type": "image_url",
@@ -207,10 +160,6 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Realistic token estimation: image (~1200) + prompt tokens + expected completion
-        expected_output = min(max_tokens, 2048)
-        estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + expected_output
-
         return self._execute_with_switching(
             requested_model=model,
             system_prompt=system_prompt,
@@ -218,7 +167,8 @@ class GroqClient:
             response_model=response_model,
             max_tokens=max_tokens,
             is_vision=True,
-            estimated_tokens=estimated,
+            # Vision token estimation: image (~1200) + text prompt + max_tokens
+            estimated_tokens=1200 + (len(system_prompt) + len(user_prompt)) // 4 + max_tokens,
         )
 
     # -- Switching and Execution Engine ---------------------------------------
@@ -318,21 +268,16 @@ class GroqClient:
                     or "limit" in err_text
                     or "quota" in err_text
                 )
-                is_unavailable = e.status_code == 404 or (
-                    e.status_code == 400
-                    and ("decommissioned" in err_text or "not exist" in err_text)
-                )
-                if is_rate_or_quota or is_unavailable:
-                    cooldown = 86400.0 if is_unavailable else 60.0
+                if is_rate_or_quota:
                     log.warning(
-                        "groq_status_error_switching_model",
+                        "groq_status_rate_limit_switching_model",
                         model=selected_model,
                         error=str(e),
                         status_code=e.status_code,
                     )
                     self._tracker.mark_cooldown(
                         model_id=selected_model,
-                        cooldown_seconds=cooldown,
+                        cooldown_seconds=60.0,
                         error_message=str(e),
                     )
                     continue
@@ -434,44 +379,20 @@ class GroqClient:
             {"role": "user", "content": user_content},
         ]
 
-        # Clamp max_tokens to fit within Groq model OTPM limits (qwen: 1000 OTPM limit)
-        effective_max_tokens = max_tokens
-        if "qwen" in model.lower():
-            effective_max_tokens = min(max_tokens, 950)
-        else:
-            effective_max_tokens = min(max_tokens, 2048)
-
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=effective_max_tokens,
+                max_tokens=max_tokens,
                 response_format={"type": "json_object"},
             )
-        except openai.RateLimitError as e:
-            err_msg = str(e).lower()
-            is_otpm = (
-                "output tokens per minute" in err_msg
-                or "otpm" in err_msg
-                or "reduce max_tokens" in err_msg
-            )
-            if is_otpm:
-                log.info("groq_clamping_max_tokens_on_otpm_limit", model=model)
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=800,
-                    response_format={"type": "json_object"},
-                )
-            else:
-                raise
         except (openai.BadRequestError, openai.APIError) as e:
             if "response_format" in str(e).lower() or "json_object" in str(e).lower():
                 log.info("retrying_without_response_format", model=model)
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=effective_max_tokens,
+                    max_tokens=max_tokens,
                 )
             else:
                 raise
