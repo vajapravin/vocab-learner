@@ -331,6 +331,58 @@ class TokenTracker:
 
         return (True, None)
 
+    def get_seconds_until_available(
+        self,
+        model_id: str,
+        estimated_tokens: int = 1000,
+        now: float | None = None,
+    ) -> float:
+        """Calculate estimated wait time in seconds until `model_id` has room
+
+        for `estimated_tokens` within its limits (cooldown, 60s TPM/RPM, 24h TPD/RPD).
+        """
+        current_time = now if now is not None else time.time()
+        limits = self.get_or_create_limits(model_id)
+
+        # 1. Cooldown wait
+        cooldown_until = limits.get("cooldown_until", 0.0)
+        cooldown_wait = max(0.0, cooldown_until - current_time)
+
+        # 2. Sliding 60-second window TPM & RPM wait
+        window_60s = current_time - 60.0
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, total_tokens
+                FROM token_usage
+                WHERE model_id = ? AND timestamp >= ?
+                ORDER BY timestamp ASC
+                """,
+                (model_id, window_60s),
+            ).fetchall()
+
+            used_tokens_60s = sum(r["total_tokens"] for r in rows)
+            req_count_60s = len(rows)
+
+            tpm_wait = 0.0
+            tpm_limit = limits.get("tpm_limit", self.default_tpm_limit)
+            if (used_tokens_60s + estimated_tokens) > tpm_limit:
+                needed_free = (used_tokens_60s + estimated_tokens) - tpm_limit
+                accum = 0
+                for r in rows:
+                    accum += int(r["total_tokens"])
+                    if accum >= needed_free:
+                        tpm_wait = max(0.0, float(r["timestamp"]) + 60.0 - current_time)
+                        break
+
+            rpm_wait = 0.0
+            rpm_limit = limits.get("rpm_limit", self.default_rpm_limit)
+            if (req_count_60s + 1) > rpm_limit and rows:
+                oldest = rows[0]
+                rpm_wait = max(0.0, float(oldest["timestamp"]) + 60.0 - current_time)
+
+        return float(max(cooldown_wait, tpm_wait, rpm_wait))
+
     def select_available_model(
         self,
         candidate_models: list[str],
@@ -339,52 +391,59 @@ class TokenTracker:
         now: float | None = None,
     ) -> tuple[str, bool]:
         """
-        Check candidate models and return the first model whose limit is NOT exceeded.
+        Check candidate models and return the model whose limit is NOT exceeded.
+        When multiple models are available, prioritizes the model with the lowest
+        recent 60-second token usage to balance load evenly and avoid hitting TPM limits.
         Returns (chosen_model, switched_from_preferred).
         """
         current_time = now if now is not None else time.time()
 
-        # Check preferred model first if valid
-        if preferred_model and preferred_model in candidate_models:
-            is_ok, reason = self.is_within_limit(
-                preferred_model,
-                estimated_tokens=estimated_tokens,
-                now=current_time,
-            )
-            if is_ok:
-                return (preferred_model, False)
-            log.info(
-                "preferred_llm_limit_exceeded_switching",
-                preferred=preferred_model,
-                reason=reason,
-            )
-
-        # Iterate through candidate models to find one whose limit is not exceeded
-        reasons: dict[str, str] = {}
+        # Gather status and 60-second usage for all candidate models
+        available_candidates: list[tuple[str, int]] = []
         for candidate in candidate_models:
-            if candidate == preferred_model:
-                continue
-            is_ok, reason = self.is_within_limit(
+            is_ok, _ = self.is_within_limit(
                 candidate,
                 estimated_tokens=estimated_tokens,
                 now=current_time,
             )
             if is_ok:
-                log.info(
-                    "switched_to_available_llm",
-                    model=candidate,
-                    switched_from=preferred_model,
-                )
-                return (candidate, True)
-            if reason:
-                reasons[candidate] = reason
+                usage = self.get_model_usage(candidate, now=current_time)
+                available_candidates.append((candidate, usage["tpm_used"]))
 
-        # If all candidates are over limit, choose fallback model
-        fallback = candidate_models[0] if candidate_models else "meta-llama/Llama-3.1-8B-Instruct"
+        if available_candidates:
+            # Sort by lowest 60s token usage; prioritize preferred_model if tied
+            available_candidates.sort(
+                key=lambda item: (item[1], 0 if item[0] == preferred_model else 1)
+            )
+            best_model = available_candidates[0][0]
+            switched = (preferred_model is not None) and (best_model != preferred_model)
+            if switched:
+                log.info(
+                    "switched_to_least_loaded_llm",
+                    model=best_model,
+                    preferred=preferred_model,
+                    tokens_used_60s=available_candidates[0][1],
+                )
+            return (best_model, switched)
+
+        # If ALL candidates are over limit, choose the candidate that will be ready soonest
+        wait_times = [
+            (
+                c,
+                self.get_seconds_until_available(
+                    c, estimated_tokens=estimated_tokens, now=current_time
+                ),
+            )
+            for c in candidate_models
+        ]
+        wait_times.sort(key=lambda item: item[1])
+        fallback = wait_times[0][0] if wait_times else candidate_models[0]
+        min_wait = round(wait_times[0][1], 2) if wait_times else 0.0
         log.warning(
             "all_llms_limit_exceeded_using_fallback",
             fallback=fallback,
             candidate_count=len(candidate_models),
+            min_wait_seconds=min_wait,
         )
         return (fallback, preferred_model != fallback)
 

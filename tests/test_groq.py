@@ -285,3 +285,75 @@ def test_groq_rpd_limit_exceeded_switches_model(tmp_path: Path) -> None:
     usage = client._tracker.get_model_usage("groq/compound", now=now)
     assert usage["rpd_used"] == 250
     assert usage["rpd_limit"] == 250
+
+
+def test_tpm_sliding_window_wait_calculation(tmp_path: Path) -> None:
+    """When TPM limit is exceeded, get_seconds_until_available calculates exact wait time."""
+    import time
+
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_wait.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+    now = time.time()
+
+    # Record 6441 tokens for model at now - 45s (limit is 8000)
+    client._tracker.record_usage(
+        model_id="openai/gpt-oss-120b",
+        key_hash="hash",
+        prompt_tokens=3000,
+        completion_tokens=3441,
+        total_tokens=6441,
+        now=now - 45.0,
+    )
+
+    # An estimated request of 2000 tokens: 6441 + 2000 = 8441 > 8000!
+    is_ok, reason = client._tracker.is_within_limit(
+        "openai/gpt-oss-120b", estimated_tokens=2000, now=now
+    )
+    assert is_ok is False
+    assert "TPM limit exceeded" in str(reason)
+
+    # Wait until now - 45.0 + 60.0 = 15.0 seconds from now!
+    wait_time = client._tracker.get_seconds_until_available(
+        "openai/gpt-oss-120b", estimated_tokens=2000, now=now
+    )
+    assert 14.5 <= wait_time <= 15.5
+
+
+def test_select_available_model_load_balancing(tmp_path: Path) -> None:
+    """select_available_model distributes load to models with lower token usage."""
+    import time
+
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_balance.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+    now = time.time()
+
+    # Model A has 3000 tokens used in the last 60s
+    client._tracker.record_usage(
+        model_id="openai/gpt-oss-120b",
+        key_hash="hash",
+        prompt_tokens=1500,
+        completion_tokens=1500,
+        total_tokens=3000,
+        now=now - 10.0,
+    )
+    # Model B has 0 tokens used
+
+    # Even if Model A is preferred, Model B has lower usage and is selected to balance load!
+    chosen, switched = client._tracker.select_available_model(
+        candidate_models=["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        preferred_model="openai/gpt-oss-120b",
+        estimated_tokens=1000,
+        now=now,
+    )
+    assert chosen == "openai/gpt-oss-20b"
+    assert switched is True

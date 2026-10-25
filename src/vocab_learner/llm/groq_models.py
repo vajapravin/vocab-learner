@@ -72,7 +72,7 @@ GROQ_MODELS_POOL: list[GroqModelInfo] = [
         context_length=8192,
         rpm_limit=30,
         rpd_limit=1000,
-        tpm_limit=8000,
+        tpm_limit=6000,
         tpd_limit=200000,
     ),
     # --- Compound / Agentic Models ---

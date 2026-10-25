@@ -157,8 +157,9 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Realistic token estimation: prompt tokens + expected completion tokens (min 2048)
-        expected_output = min(max_tokens, 2048)
+        # Realistic token estimation: prompt tokens + expected completion
+        # Structured cards are typically ~300-600 tokens
+        expected_output = min(max_tokens, 600)
         estimated = (len(system_prompt) + len(user_prompt)) // 4 + expected_output
         return self._execute_with_switching(
             requested_model=model,
@@ -324,6 +325,27 @@ class GroqClient:
             key_hash = self._key_hash(api_key)
             client = self._clients[api_key]
 
+            # If the selected model is temporarily over limits, wait for window to free tokens
+            is_ok, limit_reason = self._tracker.is_within_limit(
+                selected_model,
+                estimated_tokens=estimated_tokens,
+            )
+            if not is_ok:
+                wait_sec = self._tracker.get_seconds_until_available(
+                    selected_model,
+                    estimated_tokens=estimated_tokens,
+                )
+                if 0.0 < wait_sec <= 45.0:
+                    jittered_wait = self._calculate_jittered_delay(wait_sec)
+                    log.info(
+                        "groq_tpm_pacing_wait_for_window_reset",
+                        model=selected_model,
+                        wait_seconds=jittered_wait,
+                        base_wait=round(wait_sec, 2),
+                        reason=limit_reason,
+                    )
+                    time.sleep(jittered_wait)
+
             log.info(
                 "groq_request_dispatched",
                 model=selected_model,
@@ -363,15 +385,22 @@ class GroqClient:
                 )
 
                 retry_delay = self._extract_retry_delay(e)
-                # If retry delay is specified or if this is the only candidate model,
-                # wait with jitter and retry so concurrent requests don't all retry
-                # at the exact same millisecond
-                can_wait_and_retry = attempt < (max_attempts - 1) and (
-                    (retry_delay is not None and retry_delay <= 45.0)
-                    or (len(candidate_models) == 1 and attempt < 3)
+                # Only wait and retry the same model if there are no other candidate models
+                # available (e.g. vision tasks where only 1 model exists).
+                # If other candidates exist, immediately mark cooldown and failover!
+                can_wait_and_retry = (
+                    len(candidate_models) == 1 and attempt < (max_attempts - 1) and attempt < 3
                 )
                 if can_wait_and_retry:
-                    base_delay = retry_delay if retry_delay is not None else (2.0 * (attempt + 1))
+                    fallback_delay = self._tracker.get_seconds_until_available(
+                        selected_model,
+                        estimated_tokens=estimated_tokens,
+                    )
+                    base_delay = (
+                        retry_delay
+                        if retry_delay is not None
+                        else (fallback_delay if fallback_delay > 0.0 else (2.0 * (attempt + 1)))
+                    )
                     jittered_wait = self._calculate_jittered_delay(base_delay)
                     log.info(
                         "groq_waiting_with_jitter_before_retry",
@@ -408,16 +437,25 @@ class GroqClient:
                 )
                 is_unavailable = e.status_code == 404 or (
                     e.status_code == 400
-                    and ("decommissioned" in err_text or "not exist" in err_text)
+                    and (
+                        "decommissioned" in err_text
+                        or "not exist" in err_text
+                        or "json_validate_failed" in err_text
+                        or "failed to validate json" in err_text
+                        or "failed to generate json" in err_text
+                    )
                 )
                 if is_rate_or_quota or is_unavailable:
-                    cooldown = 86400.0 if is_unavailable else 60.0
+                    is_permanent = "decommissioned" in err_text or "not exist" in err_text
+                    cooldown = 86400.0 if is_permanent else 60.0
                     log.warning(
                         "groq_status_error_switching_model",
                         model=selected_model,
                         error=str(e),
                         status_code=e.status_code,
                     )
+                    if is_rate_or_quota:
+                        time.sleep(random.uniform(0.15, 0.75))
                     self._tracker.mark_cooldown(
                         model_id=selected_model,
                         cooldown_seconds=cooldown,
@@ -562,8 +600,15 @@ class GroqClient:
             else:
                 raise
         except (openai.BadRequestError, openai.APIError) as e:
-            if "response_format" in str(e).lower() or "json_object" in str(e).lower():
-                log.info("retrying_without_response_format", model=model)
+            err_str = str(e).lower()
+            if (
+                "response_format" in err_str
+                or "json_object" in err_str
+                or "json_validate_failed" in err_str
+                or "failed to validate json" in err_str
+                or "failed to generate json" in err_str
+            ):
+                log.info("retrying_without_response_format", model=model, error=str(e))
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
