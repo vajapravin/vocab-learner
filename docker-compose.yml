@@ -5,6 +5,8 @@ services:
     volumes:
       - .:/workspace
       - vocab-venv:/opt/venv
+      - /volume1/homes/vajapravin/dictionary/IMG:/workspace/inbox
+      - /volume1/homes/vajapravin/dictionary/MD:/workspace/outbox
     env_file:
       - .env
     working_dir: /workspace
@@ -20,3 +22,4 @@ networks:
 
 volumes:
   vocab-venv:
+
