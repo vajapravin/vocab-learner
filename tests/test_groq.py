@@ -26,11 +26,11 @@ class SampleResponse(BaseModel):
 
 def test_groq_models_pool() -> None:
     pool = get_groq_model_pool()
-    assert len(pool) >= 5
+    assert len(pool) >= 4
     vision = get_groq_vision_models(pool)
     text = get_groq_text_models(pool)
-    assert len(vision) >= 2
-    assert len(text) >= 5
+    assert len(vision) >= 1
+    assert len(text) >= 3
     assert all(isinstance(m, GroqModelInfo) for m in pool)
 
 
@@ -68,7 +68,7 @@ def test_groq_complete_structured_success(tmp_path: Path) -> None:
         c.chat.completions.create = MagicMock(return_value=mock_resp)  # type: ignore[method-assign]
 
     res = client.complete_structured(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         system_prompt="System prompt",
         user_prompt="User prompt",
         response_model=SampleResponse,
@@ -80,7 +80,7 @@ def test_groq_complete_structured_success(tmp_path: Path) -> None:
     with client._tracker._get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM token_usage WHERE model_id = ?",
-            ("llama-3.3-70b-versatile",),
+            ("openai/gpt-oss-120b",),
         ).fetchone()
         assert row is not None
         assert row["total_tokens"] == 130
@@ -113,7 +113,7 @@ def test_groq_complete_structured_rate_limit_failover(tmp_path: Path) -> None:
         )
 
     res = client.complete_structured(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         system_prompt="System",
         user_prompt="User",
         response_model=SampleResponse,
@@ -122,7 +122,7 @@ def test_groq_complete_structured_rate_limit_failover(tmp_path: Path) -> None:
     assert res.score == 95
 
     # Failing model marked in cooldown
-    is_ok, reason = client._tracker.is_within_limit("llama-3.3-70b-versatile")
+    is_ok, reason = client._tracker.is_within_limit("openai/gpt-oss-120b")
     assert is_ok is False
     assert "cooldown" in str(reason)
 
@@ -146,7 +146,7 @@ def test_groq_complete_vision_structured(tmp_path: Path) -> None:
         c.chat.completions.create = MagicMock(return_value=mock_resp)  # type: ignore[method-assign]
 
     res = client.complete_vision_structured(
-        model="llama-3.2-11b-vision-preview",
+        model="qwen/qwen3.8-27b",
         system_prompt="System",
         user_prompt="Extract image",
         image_bytes=b"sample_image_data",
@@ -161,6 +161,61 @@ def test_groq_clean_json_markdown_fences() -> None:
     raw = '```json\n{\n  "name": "clean",\n  "score": 50\n}\n```'
     cleaned = GroqClient._clean_json(raw)
     assert cleaned == '{\n  "name": "clean",\n  "score": 50\n}'
+
+
+def test_groq_try_parse_strips_schema_metadata(tmp_path: Path) -> None:
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+    raw = (
+        '{"name": "test_word", "score": 100, '
+        '"required": ["name", "score"], "$schema": "http://json-schema.org"}'
+    )
+    parsed, err = client._try_parse(raw, SampleResponse)
+    assert err is None
+    assert parsed is not None
+    assert parsed.name == "test_word"
+    assert parsed.score == 100
+
+
+def test_groq_extract_retry_delay() -> None:
+    # 1. From error message
+    err1 = openai.RateLimitError(
+        message="Rate limit reached on TPM. Please try again in 3.42s.",
+        response=MagicMock(status_code=429, headers={}),
+        body=None,
+    )
+    assert GroqClient._extract_retry_delay(err1) == 3.42
+
+    # 2. From retry-after header
+    err2 = openai.RateLimitError(
+        message="Too many requests",
+        response=MagicMock(status_code=429, headers={"retry-after": "5.5"}),
+        body=None,
+    )
+    assert GroqClient._extract_retry_delay(err2) == 5.5
+
+    # 3. None when missing
+    err3 = openai.RateLimitError(
+        message="Too many requests without time hint",
+        response=MagicMock(status_code=429, headers={}),
+        body=None,
+    )
+    assert GroqClient._extract_retry_delay(err3) is None
+
+
+def test_groq_retry_wait_jitter_randomness() -> None:
+    """Random jitter must vary across concurrent requests to avoid collisions."""
+    base_wait = 2.0
+    delays = [GroqClient._calculate_jittered_delay(base_wait) for _ in range(20)]
+    # All delays should be >= base_wait
+    assert all(d >= base_wait for d in delays)
+    # Delays must not all be identical (random noise added)
+    assert len(set(delays)) > 10
 
 
 def test_groq_per_model_limits_compound(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import sqlite3
 import time
 from pathlib import Path
@@ -433,10 +434,18 @@ class TokenTracker:
         cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
         error_message: str | None = None,
         now: float | None = None,
+        jitter_seconds: float | None = None,
     ) -> None:
-        """Mark a model in cooldown (e.g. after HTTP 429 response) in SQLite."""
+        """Mark a model in cooldown (e.g. after HTTP 429 response) in SQLite.
+
+        Adds a small amount of random delay (noise / jitter) to cooldown_seconds
+        so multiple concurrent requests don't all retry at the exact same millisecond.
+        """
         current_time = now if now is not None else time.time()
-        cooldown_until = current_time + cooldown_seconds
+        # Add random jitter (1.0 to 4.0s) unless explicitly overridden
+        noise = jitter_seconds if jitter_seconds is not None else random.uniform(1.0, 4.0)
+        effective_cooldown = cooldown_seconds + noise
+        cooldown_until = current_time + effective_cooldown
 
         with self._get_connection() as conn:
             conn.execute(
@@ -465,7 +474,8 @@ class TokenTracker:
         log.warning(
             "model_marked_cooldown",
             model=model_id,
-            cooldown_seconds=cooldown_seconds,
+            cooldown_seconds=round(effective_cooldown, 2),
+            jitter=round(noise, 2),
             error=error_message,
         )
 

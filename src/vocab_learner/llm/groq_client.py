@@ -6,7 +6,9 @@ import base64
 import hashlib
 import json
 import os
+import random
 import re
+import time
 from typing import TypeVar
 
 import openai
@@ -67,21 +69,6 @@ class GroqClient:
             tpd_limit=settings.daily_token_limit,
         )
 
-        # Groq models pool
-        self._models_pool = models_pool or get_groq_model_pool()
-        self._vision_models = [m.model_id for m in get_groq_vision_models(self._models_pool)]
-        self._text_models = [m.model_id for m in get_groq_text_models(self._models_pool)]
-
-        # Register per-model limits in SQLite
-        for m in self._models_pool:
-            self._tracker.register_model_limits(
-                model_id=m.model_id,
-                rpm_limit=m.rpm_limit,
-                rpd_limit=m.rpd_limit,
-                tpm_limit=m.tpm_limit,
-                tpd_limit=m.tpd_limit,
-            )
-
         # Map of active OpenAI clients (max_retries=0 enables instant model switching)
         self._clients: dict[str, openai.OpenAI] = {
             key: openai.OpenAI(
@@ -92,6 +79,32 @@ class GroqClient:
             )
             for key in self._keys
         }
+
+        # Groq models pool - dynamically filter by active models on the Groq account
+        self._models_pool = models_pool or get_groq_model_pool()
+        if models_pool is None:
+            primary_client = next(iter(self._clients.values()))
+            try:
+                active_ids = {m.id for m in primary_client.models.list().data}
+                filtered = [m for m in self._models_pool if m.model_id in active_ids]
+                if filtered:
+                    self._models_pool = filtered
+            except Exception as e:
+                log.debug("groq_models_list_filter_skipped", error=str(e))
+
+        self._vision_models = [m.model_id for m in get_groq_vision_models(self._models_pool)]
+        self._text_models = [m.model_id for m in get_groq_text_models(self._models_pool)]
+
+        # Register per-model limits in SQLite and unblock any false-alarm cooldowns
+        for m in self._models_pool:
+            self._tracker.register_model_limits(
+                model_id=m.model_id,
+                rpm_limit=m.rpm_limit,
+                rpd_limit=m.rpd_limit,
+                tpm_limit=m.tpm_limit,
+                tpd_limit=m.tpd_limit,
+            )
+            self._tracker.clear_cooldown(m.model_id)
 
     @staticmethod
     def _load_keys(settings: Settings) -> list[str]:
@@ -207,19 +220,64 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Realistic token estimation: image (~1200) + prompt tokens + expected completion
-        expected_output = min(max_tokens, 2048)
-        estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + expected_output
+        # Groq enforces 1000 OTPM on qwen vision; clamp max_tokens <= 800 to avoid OTPM 429
+        clamped_max_tokens = min(max_tokens, 800)
+        estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + clamped_max_tokens
 
         return self._execute_with_switching(
             requested_model=model,
             system_prompt=system_prompt,
             user_content=[image_part, text_part],
             response_model=response_model,
-            max_tokens=max_tokens,
+            max_tokens=clamped_max_tokens,
             is_vision=True,
             estimated_tokens=estimated,
         )
+
+    # -- Jitter and Delay Helpers ---------------------------------------------
+
+    @staticmethod
+    def _extract_retry_delay(err: Exception) -> float | None:
+        """Extract retry wait time in seconds from RateLimitError headers or message."""
+        response = getattr(err, "response", None)
+        if response is not None and hasattr(response, "headers"):
+            retry_header = response.headers.get("retry-after")
+            if retry_header:
+                try:
+                    return float(retry_header)
+                except ValueError:
+                    pass
+
+        msg = str(err).lower()
+        match_sec = re.search(r"try again in\s+([\d\.]+)\s*s", msg)
+        if match_sec:
+            try:
+                return float(match_sec.group(1))
+            except ValueError:
+                pass
+
+        match_min = re.search(r"try again in\s+(\d+)m([\d\.]+)s", msg)
+        if match_min:
+            try:
+                return float(match_min.group(1)) * 60 + float(match_min.group(2))
+            except ValueError:
+                pass
+
+        return None
+
+    @staticmethod
+    def _calculate_jittered_delay(
+        base_wait: float,
+        min_noise: float = 0.25,
+        max_noise: float = 1.75,
+    ) -> float:
+        """
+        Add a small amount of random delay (noise / jitter) to the wait time so multiple
+        concurrent requests don't all retry at the exact same millisecond.
+        """
+        proportional_noise = max(0.0, base_wait) * random.uniform(0.05, 0.15)
+        random_noise = random.uniform(min_noise, max_noise)
+        return round(base_wait + proportional_noise + random_noise, 3)
 
     # -- Switching and Execution Engine ---------------------------------------
 
@@ -296,17 +354,47 @@ class GroqClient:
                 return result
 
             except openai.RateLimitError as e:
+                err_msg = str(e)
                 log.warning(
                     "groq_rate_limit_exceeded_switching_model",
                     model=selected_model,
-                    error=str(e),
+                    error=err_msg,
                     attempt=attempt + 1,
                 )
+
+                retry_delay = self._extract_retry_delay(e)
+                # If retry delay is specified or if this is the only candidate model,
+                # wait with jitter and retry so concurrent requests don't all retry
+                # at the exact same millisecond
+                can_wait_and_retry = attempt < (max_attempts - 1) and (
+                    (retry_delay is not None and retry_delay <= 45.0)
+                    or (len(candidate_models) == 1 and attempt < 3)
+                )
+                if can_wait_and_retry:
+                    base_delay = retry_delay if retry_delay is not None else (2.0 * (attempt + 1))
+                    jittered_wait = self._calculate_jittered_delay(base_delay)
+                    log.info(
+                        "groq_waiting_with_jitter_before_retry",
+                        model=selected_model,
+                        base_wait=base_delay,
+                        total_wait=jittered_wait,
+                        attempt=attempt + 1,
+                    )
+                    time.sleep(jittered_wait)
+                    # Allow retrying this model
+                    tried_models.discard(selected_model)
+                    continue
+
+                # Add a small random delay (noise) before switching so concurrent
+                # requests don't all hit the next model simultaneously
+                stagger_noise = random.uniform(0.15, 0.75)
+                time.sleep(stagger_noise)
+
                 # Mark model in cooldown in SQLite so subsequent requests immediately skip it
                 self._tracker.mark_cooldown(
                     model_id=selected_model,
                     cooldown_seconds=60.0,
-                    error_message=str(e),
+                    error_message=err_msg,
                 )
                 continue
 
@@ -390,13 +478,18 @@ class GroqClient:
         repair_part: ChatCompletionContentPartTextParam = {
             "type": "text",
             "text": (
-                "Your previous response could not be parsed as valid JSON "
-                "matching the required schema. Error:\n\n"
-                f"{first_error}\n\n"
-                "Return ONLY the corrected JSON object. No prose, no markdown fences."
+                "Your previous JSON response failed validation:\n"
+                f"Previous output: {raw_text}\n\n"
+                f"Validation error: {first_error}\n\n"
+                "Return ONLY the corrected JSON object matching the required schema. "
+                "No markdown fences."
             ),
         }
-        repair_content: list[UserContentPart] = [*user_content, repair_part]
+        # Keep only text parts from user_content to avoid re-uploading heavy images against ITPM
+        text_only_parts: list[UserContentPart] = [
+            p for p in user_content if p.get("type") == "text"
+        ]
+        repair_content: list[UserContentPart] = [*text_only_parts, repair_part]
         raw_text, repair_usage = self._send(
             client=client,
             model=model,
@@ -437,7 +530,7 @@ class GroqClient:
         # Clamp max_tokens to fit within Groq model OTPM limits (qwen: 1000 OTPM limit)
         effective_max_tokens = max_tokens
         if "qwen" in model.lower():
-            effective_max_tokens = min(max_tokens, 950)
+            effective_max_tokens = min(max_tokens, 800)
         else:
             effective_max_tokens = min(max_tokens, 2048)
 
@@ -457,10 +550,13 @@ class GroqClient:
             )
             if is_otpm:
                 log.info("groq_clamping_max_tokens_on_otpm_limit", model=model)
+                # Small random delay (noise) so multiple concurrent requests
+                # don't retry at the exact same millisecond
+                time.sleep(random.uniform(0.2, 0.75))
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=800,
+                    max_tokens=600,
                     response_format={"type": "json_object"},
                 )
             else:
@@ -493,6 +589,19 @@ class GroqClient:
 
     def _try_parse(self, raw: str, response_model: type[T]) -> tuple[T | None, Exception | None]:
         cleaned = self._clean_json(raw)
+        # Attempt direct JSON deserialization and metadata cleanup
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, dict):
+                # Strip schema metadata keys that some LLMs inadvertently copy
+                for meta_key in ("required", "$defs", "$schema"):
+                    if meta_key in data and meta_key not in response_model.model_fields:
+                        data.pop(meta_key, None)
+                parsed = response_model.model_validate(data)
+                return parsed, None
+        except Exception:
+            pass
+
         try:
             parsed = response_model.model_validate_json(cleaned)
             return parsed, None
@@ -500,8 +609,13 @@ class GroqClient:
             match = re.search(r"(\{.*\})", cleaned, re.DOTALL)
             if match:
                 try:
-                    parsed = response_model.model_validate_json(match.group(1))
-                    return parsed, None
+                    data = json.loads(match.group(1))
+                    if isinstance(data, dict):
+                        for meta_key in ("required", "$defs", "$schema"):
+                            if meta_key in data and meta_key not in response_model.model_fields:
+                                data.pop(meta_key, None)
+                        parsed = response_model.model_validate(data)
+                        return parsed, None
                 except Exception:
                     pass
             return None, e
