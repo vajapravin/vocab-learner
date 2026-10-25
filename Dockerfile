@@ -3,7 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/opt/venv
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_EXTRA_INDEX_URL="https://abetlen.github.io/llama-cpp-python/whl/cpu"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates \

@@ -4,7 +4,8 @@ services:
     container_name: vocab-learner
     volumes:
       - .:/workspace
-      - vocab-venv:/opt/venv
+      - /volume1/homes/vajapravin/dictionary/IMG:/workspace/inbox
+      - /volume1/homes/vajapravin/dictionary/MD:/workspace/outbox
       - ./models:/workspace/models:ro
     env_file:
       - .env
@@ -18,6 +19,3 @@ services:
 networks:
   app-net:
     driver: bridge
-
-volumes:
-  vocab-venv:
