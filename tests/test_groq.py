@@ -423,3 +423,58 @@ def test_groq_json_generation_failure_switches_model(tmp_path: Path) -> None:
     is_ok, reason = client._tracker.is_within_limit("allam-2-7b")
     assert is_ok is False
     assert "Model in cooldown" in str(reason)
+
+
+def test_groq_vision_429_retries_sole_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a sole vision model gets 429, it waits with jitter and retries instead of crashing."""
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_vision_429.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+
+    call_count = 0
+
+    def mock_create(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 429
+            mock_resp.headers = {"retry-after": "0.01"}
+            err_dict = {"error": {"message": "Rate limit reached. Please try again in 0.01s."}}
+            raise openai.RateLimitError(
+                message="Rate limit reached. Please try again in 0.01s.",
+                response=mock_resp,
+                body=err_dict,
+            )
+        else:
+            mock_choice = MagicMock()
+            mock_choice.message.content = '{"name": "VisionResult", "score": 100}'
+            mock_resp = MagicMock()
+            mock_resp.choices = [mock_choice]
+            mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=20, total_tokens=70)
+            return mock_resp
+
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = mock_create
+    client._clients["gsk_test_dummy"] = mock_openai
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    res = client._execute_with_switching(
+        requested_model="qwen/qwen3.8-27b",
+        system_prompt="sys",
+        user_content=[{"type": "text", "text": "usr"}],
+        response_model=SampleResponse,
+        max_tokens=500,
+        is_vision=True,
+        estimated_tokens=500,
+    )
+
+    assert res.name == "VisionResult"
+    assert res.score == 100
+    assert call_count == 2

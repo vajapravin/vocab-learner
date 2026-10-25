@@ -44,7 +44,7 @@ GROQ_MODELS_POOL: list[GroqModelInfo] = [
         context_length=131072,
         rpm_limit=30,
         rpd_limit=1000,
-        tpm_limit=7000,
+        tpm_limit=8000,
         tpd_limit=200000,
     ),
     # --- High-Capability Text Models ---
@@ -126,5 +126,9 @@ def get_groq_vision_models(pool: list[GroqModelInfo] | None = None) -> list[Groq
 
 
 def get_groq_text_models(pool: list[GroqModelInfo] | None = None) -> list[GroqModelInfo]:
-    """Return Groq models capable of text tasks."""
-    return list(pool if pool is not None else GROQ_MODELS_POOL)
+    """Return Groq models capable of text tasks, prioritizing dedicated text models."""
+    source = pool if pool is not None else GROQ_MODELS_POOL
+    # Prioritize dedicated text models so multimodal models keep their TPM budget for vision tasks
+    text_dedicated = [m for m in source if not m.supports_vision]
+    multimodal = [m for m in source if m.supports_vision]
+    return text_dedicated + multimodal

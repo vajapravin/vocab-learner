@@ -221,8 +221,8 @@ class GroqClient:
             "type": "text",
             "text": user_prompt,
         }
-        # Groq enforces 1000 OTPM on qwen vision; clamp max_tokens <= 800 to avoid OTPM 429
-        clamped_max_tokens = min(max_tokens, 800)
+        # Groq enforces 1000 OTPM on qwen vision; clamp max_tokens <= 600 to avoid OTPM 429
+        clamped_max_tokens = min(max_tokens, 600)
         estimated = 1200 + (len(system_prompt) + len(user_prompt)) // 4 + clamped_max_tokens
 
         return self._execute_with_switching(
@@ -305,7 +305,7 @@ class GroqClient:
             else (candidate_models[0] if candidate_models else requested_model)
         )
 
-        max_attempts = min(5, len(candidate_models))
+        max_attempts = 4 if len(candidate_models) == 1 else min(5, len(candidate_models))
         tried_models: set[str] = set()
 
         for attempt in range(max_attempts):
@@ -335,7 +335,8 @@ class GroqClient:
                     selected_model,
                     estimated_tokens=estimated_tokens,
                 )
-                if 0.0 < wait_sec <= 45.0:
+                max_pacing_wait = 65.0 if len(candidate_models) == 1 else 30.0
+                if 0.0 < wait_sec <= max_pacing_wait:
                     jittered_wait = self._calculate_jittered_delay(wait_sec)
                     log.info(
                         "groq_tpm_pacing_wait_for_window_reset",
@@ -388,9 +389,7 @@ class GroqClient:
                 # Only wait and retry the same model if there are no other candidate models
                 # available (e.g. vision tasks where only 1 model exists).
                 # If other candidates exist, immediately mark cooldown and failover!
-                can_wait_and_retry = (
-                    len(candidate_models) == 1 and attempt < (max_attempts - 1) and attempt < 3
-                )
+                can_wait_and_retry = len(candidate_models) == 1 and attempt < (max_attempts - 1)
                 if can_wait_and_retry:
                     fallback_delay = self._tracker.get_seconds_until_available(
                         selected_model,
@@ -604,13 +603,17 @@ class GroqClient:
             )
             if is_otpm:
                 log.info("groq_clamping_max_tokens_on_otpm_limit", model=model)
-                # Small random delay (noise) so multiple concurrent requests
-                # don't retry at the exact same millisecond
-                time.sleep(random.uniform(0.2, 0.75))
+                retry_wait = self._extract_retry_delay(e)
+                wait_time = (
+                    self._calculate_jittered_delay(retry_wait)
+                    if retry_wait is not None
+                    else random.uniform(1.0, 3.0)
+                )
+                time.sleep(wait_time)
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=600,
+                    max_tokens=400,
                     response_format={"type": "json_object"},
                 )
             else:
