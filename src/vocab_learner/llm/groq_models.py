@@ -66,15 +66,17 @@ GROQ_MODELS_POOL: list[GroqModelInfo] = [
         tpm_limit=8000,
         tpd_limit=500000,
     ),
-    GroqModelInfo(
-        model_id="allam-2-7b",
-        supports_vision=False,
-        context_length=8192,
-        rpm_limit=30,
-        rpd_limit=1000,
-        tpm_limit=6000,
-        tpd_limit=200000,
-    ),
+    # allam-2-7b is an Arabic bilingual LLM that cannot reliably generate English JSON schemas
+    # and fails Groq JSON validation (HTTP 400: Failed to generate JSON)
+    # GroqModelInfo(
+    #     model_id="allam-2-7b",
+    #     supports_vision=False,
+    #     context_length=8192,
+    #     rpm_limit=30,
+    #     rpd_limit=1000,
+    #     tpm_limit=6000,
+    #     tpd_limit=200000,
+    # ),
     # --- Compound / Agentic Models ---
     GroqModelInfo(
         model_id="groq/compound",

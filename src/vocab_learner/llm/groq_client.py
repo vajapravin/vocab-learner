@@ -446,7 +446,13 @@ class GroqClient:
                     )
                 )
                 if is_rate_or_quota or is_unavailable:
-                    is_permanent = "decommissioned" in err_text or "not exist" in err_text
+                    is_permanent = (
+                        "decommissioned" in err_text
+                        or "not exist" in err_text
+                        or "json_validate_failed" in err_text
+                        or "failed to validate json" in err_text
+                        or "failed to generate json" in err_text
+                    )
                     cooldown = 86400.0 if is_permanent else 60.0
                     log.warning(
                         "groq_status_error_switching_model",
@@ -466,8 +472,18 @@ class GroqClient:
                 log.error("groq_api_status_error", model=selected_model, error=str(e))
                 raise LLMError(f"Groq API error ({selected_model}): {e}") from e
 
-            except LLMValidationError:
-                raise
+            except LLMValidationError as e:
+                log.warning(
+                    "groq_validation_error_switching_model",
+                    model=selected_model,
+                    error=str(e),
+                )
+                self._tracker.mark_cooldown(
+                    model_id=selected_model,
+                    cooldown_seconds=86400.0,
+                    error_message=str(e),
+                )
+                continue
 
             except Exception as e:
                 err_str = str(e).lower()
@@ -609,11 +625,19 @@ class GroqClient:
                 or "failed to generate json" in err_str
             ):
                 log.info("retrying_without_response_format", model=model, error=str(e))
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=effective_max_tokens,
-                )
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        max_tokens=effective_max_tokens,
+                    )
+                except Exception as retry_err:
+                    log.warning(
+                        "retry_without_response_format_failed",
+                        model=model,
+                        error=str(retry_err),
+                    )
+                    raise e from retry_err
             else:
                 raise
 

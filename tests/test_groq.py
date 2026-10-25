@@ -357,3 +357,69 @@ def test_select_available_model_load_balancing(tmp_path: Path) -> None:
     )
     assert chosen == "openai/gpt-oss-20b"
     assert switched is True
+
+
+def test_groq_json_generation_failure_switches_model(tmp_path: Path) -> None:
+    """When a model fails with 400 'Failed to generate JSON', it marks cooldown and switches."""
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_dummy",
+        sqlite_db_path=tmp_path / "test_json_fail.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = GroqClient(settings=settings)
+
+    call_count = {"model_a": 0, "model_b": 0}
+
+    def mock_create(*args, **kwargs):  # type: ignore[no-untyped-def]
+        model = kwargs.get("model")
+        if model == "allam-2-7b":
+            call_count["model_a"] += 1
+            # Groq 400 error
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            err_dict = {
+                "error": {
+                    "message": "Failed to generate JSON. Please adjust your prompt.",
+                    "code": "json_validate_failed",
+                }
+            }
+            raise openai.BadRequestError(
+                message="Error code: 400 - " + str(err_dict),
+                response=mock_resp,
+                body=err_dict,
+            )
+        else:
+            call_count["model_b"] += 1
+            mock_choice = MagicMock()
+            mock_choice.message.content = '{"name": "Alice", "score": 99}'
+            mock_resp = MagicMock()
+            mock_resp.choices = [mock_choice]
+            mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=20, total_tokens=70)
+            return mock_resp
+
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = mock_create
+    client._clients["gsk_test_dummy"] = mock_openai
+
+    client._text_models = ["allam-2-7b", "openai/gpt-oss-120b"]
+
+    res = client._execute_with_switching(
+        requested_model="allam-2-7b",
+        system_prompt="sys",
+        user_content=[{"type": "text", "text": "usr"}],
+        response_model=SampleResponse,
+        max_tokens=500,
+        is_vision=False,
+        estimated_tokens=500,
+    )
+
+    assert res.name == "Alice"
+    assert res.score == 99
+    # Verify allam-2-7b was tried, failed, and openai/gpt-oss-120b took over
+    assert call_count["model_a"] >= 1
+    assert call_count["model_b"] == 1
+    # Verify allam-2-7b is marked in cooldown
+    is_ok, reason = client._tracker.is_within_limit("allam-2-7b")
+    assert is_ok is False
+    assert "Model in cooldown" in str(reason)
