@@ -14,13 +14,20 @@ log = get_logger(__name__)
 # Default limits
 DEFAULT_TPM_LIMIT = 30000  # tokens per minute
 DEFAULT_RPM_LIMIT = 30  # requests per minute
-DEFAULT_DAILY_LIMIT = 500000  # tokens per 24 hours
+DEFAULT_RPD_LIMIT = 1000  # requests per day (daily equivalent of RPM)
+DEFAULT_TPD_LIMIT = 500000  # tokens per 24 hours (daily equivalent of TPM)
+DEFAULT_DAILY_LIMIT = DEFAULT_TPD_LIMIT  # for backward compatibility
 DEFAULT_COOLDOWN_SECONDS = 60.0  # cooldown when 429 is encountered
 
 
 class TokenTracker:
     """
     Tracks token usage and rate limits per model in a lightweight SQLite database.
+    Manages:
+      - RPM (Requests Per Minute)
+      - TPM (Tokens Per Minute)
+      - RPD (Requests Per Day - daily equivalent of RPM)
+      - TPD (Tokens Per Day - daily equivalent of TPM)
     Keeps minimal data storage by pruning history older than 24 hours on every write.
     """
 
@@ -29,12 +36,16 @@ class TokenTracker:
         db_path: Path,
         tpm_limit: int = DEFAULT_TPM_LIMIT,
         rpm_limit: int = DEFAULT_RPM_LIMIT,
-        daily_limit: int = DEFAULT_DAILY_LIMIT,
+        rpd_limit: int = DEFAULT_RPD_LIMIT,
+        tpd_limit: int = DEFAULT_TPD_LIMIT,
+        daily_limit: int | None = None,
     ) -> None:
         self.db_path = db_path
         self.default_tpm_limit = tpm_limit
         self.default_rpm_limit = rpm_limit
-        self.default_daily_limit = daily_limit
+        self.default_rpd_limit = rpd_limit
+        self.default_tpd_limit = daily_limit if daily_limit is not None else tpd_limit
+        self.default_daily_limit = self.default_tpd_limit
 
         self._ensure_dir()
         self._init_db()
@@ -66,12 +77,28 @@ class TokenTracker:
                     tpm_limit INTEGER NOT NULL,
                     rpm_limit INTEGER NOT NULL,
                     daily_limit INTEGER NOT NULL,
+                    rpd_limit INTEGER NOT NULL DEFAULT 1000,
+                    tpd_limit INTEGER NOT NULL DEFAULT 500000,
                     cooldown_until REAL NOT NULL DEFAULT 0.0,
                     last_error TEXT,
                     updated_at REAL NOT NULL
                 );
                 """
             )
+
+            # Auto-migrate columns if table existed without rpd_limit or tpd_limit
+            cols = {
+                row["name"] for row in conn.execute("PRAGMA table_info(model_limits);").fetchall()
+            }
+            if "rpd_limit" not in cols:
+                conn.execute(
+                    "ALTER TABLE model_limits ADD COLUMN rpd_limit INTEGER NOT NULL DEFAULT 1000;"
+                )
+            if "tpd_limit" not in cols:
+                conn.execute(
+                    "ALTER TABLE model_limits ADD COLUMN tpd_limit INTEGER NOT NULL DEFAULT 500000;"
+                )
+
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS token_usage (
@@ -93,6 +120,35 @@ class TokenTracker:
             )
             conn.commit()
 
+    def register_model_limits(
+        self,
+        model_id: str,
+        rpm_limit: int,
+        rpd_limit: int,
+        tpm_limit: int,
+        tpd_limit: int,
+    ) -> None:
+        """Register or update limits for a specific model in SQLite."""
+        now = time.time()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO model_limits (
+                    model_id, tpm_limit, rpm_limit, daily_limit,
+                    rpd_limit, tpd_limit, cooldown_until, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0.0, NULL, ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    tpm_limit = excluded.tpm_limit,
+                    rpm_limit = excluded.rpm_limit,
+                    daily_limit = excluded.daily_limit,
+                    rpd_limit = excluded.rpd_limit,
+                    tpd_limit = excluded.tpd_limit,
+                    updated_at = excluded.updated_at
+                """,
+                (model_id, tpm_limit, rpm_limit, tpd_limit, rpd_limit, tpd_limit, now),
+            )
+            conn.commit()
+
     def get_or_create_limits(self, model_id: str) -> dict[str, Any]:
         """Fetch model limits and cooldown from SQLite, or insert defaults."""
         now = time.time()
@@ -110,14 +166,16 @@ class TokenTracker:
                 """
                 INSERT INTO model_limits (
                     model_id, tpm_limit, rpm_limit, daily_limit,
-                    cooldown_until, last_error, updated_at
-                ) VALUES (?, ?, ?, ?, 0.0, NULL, ?)
+                    rpd_limit, tpd_limit, cooldown_until, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0.0, NULL, ?)
                 """,
                 (
                     model_id,
                     self.default_tpm_limit,
                     self.default_rpm_limit,
-                    self.default_daily_limit,
+                    self.default_tpd_limit,
+                    self.default_rpd_limit,
+                    self.default_tpd_limit,
                     now,
                 ),
             )
@@ -126,11 +184,63 @@ class TokenTracker:
                 "model_id": model_id,
                 "tpm_limit": self.default_tpm_limit,
                 "rpm_limit": self.default_rpm_limit,
-                "daily_limit": self.default_daily_limit,
+                "daily_limit": self.default_tpd_limit,
+                "rpd_limit": self.default_rpd_limit,
+                "tpd_limit": self.default_tpd_limit,
                 "cooldown_until": 0.0,
                 "last_error": None,
                 "updated_at": now,
             }
+
+    def get_model_usage(
+        self,
+        model_id: str,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Return current usage and configured limits for a model across 60s and 24h."""
+        current_time = now if now is not None else time.time()
+        limits = self.get_or_create_limits(model_id)
+
+        with self._get_connection() as conn:
+            # 60s window
+            window_60s = current_time - 60.0
+            row_60s = conn.execute(
+                """
+                SELECT COALESCE(SUM(total_tokens), 0) AS sum_tokens, COUNT(*) AS req_count
+                FROM token_usage
+                WHERE model_id = ? AND timestamp >= ?
+                """,
+                (model_id, window_60s),
+            ).fetchone()
+            used_tokens_60s = row_60s["sum_tokens"] if row_60s else 0
+            req_count_60s = row_60s["req_count"] if row_60s else 0
+
+            # 24h window
+            window_24h = current_time - 86400.0
+            row_24h = conn.execute(
+                """
+                SELECT COALESCE(SUM(total_tokens), 0) AS sum_tokens, COUNT(*) AS req_count
+                FROM token_usage
+                WHERE model_id = ? AND timestamp >= ?
+                """,
+                (model_id, window_24h),
+            ).fetchone()
+            used_tokens_24h = row_24h["sum_tokens"] if row_24h else 0
+            req_count_24h = row_24h["req_count"] if row_24h else 0
+
+        return {
+            "model_id": model_id,
+            "rpm_used": req_count_60s,
+            "rpm_limit": limits.get("rpm_limit", self.default_rpm_limit),
+            "tpm_used": used_tokens_60s,
+            "tpm_limit": limits.get("tpm_limit", self.default_tpm_limit),
+            "rpd_used": req_count_24h,
+            "rpd_limit": limits.get("rpd_limit", self.default_rpd_limit),
+            "tpd_used": used_tokens_24h,
+            "tpd_limit": limits.get("tpd_limit")
+            or limits.get("daily_limit", self.default_tpd_limit),
+            "cooldown_until": limits.get("cooldown_until", 0.0),
+        }
 
     def is_within_limit(
         self,
@@ -139,7 +249,12 @@ class TokenTracker:
         now: float | None = None,
     ) -> tuple[bool, str | None]:
         """
-        Check whether calling `model_id` with `estimated_tokens` stays within limits.
+        Check whether calling `model_id` with `estimated_tokens` stays within limits:
+          1. Cooldown from prior 429/402 errors
+          2. RPM (Requests Per Minute)
+          3. TPM (Tokens Per Minute)
+          4. RPD (Requests Per Day)
+          5. TPD (Tokens Per Day)
         Returns (is_available, reason_if_exceeded).
         """
         current_time = now if now is not None else time.time()
@@ -169,25 +284,26 @@ class TokenTracker:
             used_tokens_60s = row_60s["sum_tokens"] if row_60s else 0
             req_count_60s = row_60s["req_count"] if row_60s else 0
 
-            tpm_limit = limits["tpm_limit"]
-            if (used_tokens_60s + estimated_tokens) > tpm_limit:
-                return (
-                    False,
-                    f"TPM limit exceeded: {used_tokens_60s} + {estimated_tokens} > {tpm_limit}",
-                )
-
-            rpm_limit = limits["rpm_limit"]
+            rpm_limit = limits.get("rpm_limit", self.default_rpm_limit)
             if (req_count_60s + 1) > rpm_limit:
                 return (
                     False,
-                    f"RPM limit exceeded: {req_count_60s} + 1 > {rpm_limit}",
+                    f"RPM limit exceeded: {req_count_60s} + 1 > {rpm_limit} req/min",
                 )
 
-            # 3. Check 24-hour window daily limit
+            tpm_limit = limits.get("tpm_limit", self.default_tpm_limit)
+            if (used_tokens_60s + estimated_tokens) > tpm_limit:
+                msg = (
+                    f"TPM limit exceeded: {used_tokens_60s} + {estimated_tokens} > "
+                    f"{tpm_limit} tokens/min"
+                )
+                return (False, msg)
+
+            # 3. Check 24-hour window RPD (daily requests) and TPD (daily tokens)
             window_24h = current_time - 86400.0
             row_24h = conn.execute(
                 """
-                SELECT COALESCE(SUM(total_tokens), 0) AS sum_tokens
+                SELECT COALESCE(SUM(total_tokens), 0) AS sum_tokens, COUNT(*) AS req_count
                 FROM token_usage
                 WHERE model_id = ? AND timestamp >= ?
                 """,
@@ -195,11 +311,20 @@ class TokenTracker:
             ).fetchone()
 
             used_tokens_24h = row_24h["sum_tokens"] if row_24h else 0
-            daily_limit = limits["daily_limit"]
-            if (used_tokens_24h + estimated_tokens) > daily_limit:
+            req_count_24h = row_24h["req_count"] if row_24h else 0
+
+            rpd_limit = limits.get("rpd_limit", self.default_rpd_limit)
+            if (req_count_24h + 1) > rpd_limit:
+                return (
+                    False,
+                    f"RPD limit exceeded: {req_count_24h} + 1 > {rpd_limit} req/day",
+                )
+
+            tpd_limit = limits.get("tpd_limit") or limits.get("daily_limit", self.default_tpd_limit)
+            if (used_tokens_24h + estimated_tokens) > tpd_limit:
                 err_msg = (
-                    f"Daily token limit exceeded: {used_tokens_24h} + {estimated_tokens} > "
-                    f"{daily_limit}"
+                    f"TPD limit exceeded: {used_tokens_24h} + {estimated_tokens} > "
+                    f"{tpd_limit} tokens/day"
                 )
                 return (False, err_msg)
 

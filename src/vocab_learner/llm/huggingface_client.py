@@ -66,7 +66,8 @@ class HuggingFaceClient:
             db_path=settings.sqlite_db_path,
             tpm_limit=settings.tpm_limit,
             rpm_limit=settings.rpm_limit,
-            daily_limit=settings.daily_token_limit,
+            rpd_limit=settings.rpd_limit,
+            tpd_limit=settings.daily_token_limit,
         )
 
         # 30 models pool

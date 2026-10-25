@@ -75,3 +75,27 @@ def test_factory_huggingface_without_key_raises() -> None:
     )
     with pytest.raises(ValueError, match="HUGGINGFACE_API_KEY"):
         build_llm_client(settings)
+
+
+def test_factory_returns_groq_client(tmp_path: Path) -> None:
+    from vocab_learner.llm.groq_client import GroqClient
+
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key="gsk_test_key",
+        sqlite_db_path=tmp_path / "test.db",
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    client = build_llm_client(settings)
+    assert isinstance(client, GroqClient)
+
+
+def test_factory_groq_without_key_raises() -> None:
+    settings = Settings(
+        llm_provider="groq",
+        groq_api_key=None,
+        groq_api_keys=None,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    with pytest.raises(ValueError, match="GROQ_API_KEY"):
+        build_llm_client(settings)
