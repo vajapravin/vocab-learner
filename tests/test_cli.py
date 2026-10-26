@@ -245,6 +245,7 @@ class TestSendCommand:
         monkeypatch.setenv("VOCAB_LEARNER_SMTP_HOST", "smtp.test.com")
         monkeypatch.setenv("VOCAB_LEARNER_EMAIL_FROM", "from@test.com")
         monkeypatch.setenv("VOCAB_LEARNER_EMAIL_TO", "to@test.com")
+        monkeypatch.setenv("VOCAB_LEARNER_LLM_PROVIDER", "openai")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
         session_file = tmp_path / "session_20260101_120000.md"
