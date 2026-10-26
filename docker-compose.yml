@@ -13,6 +13,8 @@ services:
     stdin_open: true
     tty: true
     command: bash
+    mem_limit: 2G
+    cpus: 1
     networks:
       - app-net
 
