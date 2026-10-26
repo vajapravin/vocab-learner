@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    container_name: vocab-learner
+    volumes:
+      - .:/workspace
+      - ./IMG:/workspace/inbox
+      - ./MD:/workspace/outbox
+      - ./models:/workspace/models:ro
+    env_file:
+      - .env
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    command: bash
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge

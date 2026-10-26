@@ -15,6 +15,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in list(os.environ):
         if key.startswith("VOCAB_LEARNER_") or key in {
             "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
             "OPENAI_API_KEY",
         }:
             monkeypatch.delenv(key, raising=False)
@@ -23,6 +24,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_load_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-456")
     monkeypatch.setenv("VOCAB_LEARNER_LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("VOCAB_LEARNER_EXTRACTION_MODEL", "gpt-4.1")
 
@@ -30,6 +32,7 @@ def test_settings_load_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.anthropic_api_key == "sk-test-123"
+    assert settings.gemini_api_key == "gemini-test-456"
     assert settings.log_level == "DEBUG"
     assert settings.extraction_model == "gpt-4.1"
     assert settings.teaching_model == "gpt-4.1"  # default
@@ -40,4 +43,5 @@ def test_settings_no_keys_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.anthropic_api_key is None
+    assert settings.gemini_api_key is None
     assert settings.openai_api_key is None

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from vocab_learner.utils import utcnow
 
@@ -38,9 +39,26 @@ class VocabEntry(BaseModel):
     derived_forms: list[DerivedForm] = Field(default_factory=list)
     sense_count: int = Field(default=1, ge=1)
     raw_block: str = Field(
-        ...,
+        default="",
         description="Full raw text of this entry block from the source page.",
     )
+
+    @field_validator("derived_forms", mode="before")
+    @classmethod
+    def _coerce_derived_forms(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [{"word": v}]
+        if isinstance(v, list):
+            out: list[Any] = []
+            for item in v:
+                if isinstance(item, str):
+                    out.append({"word": item})
+                else:
+                    out.append(item)
+            return out
+        return v
 
 
 class ExtractionResult(BaseModel):
@@ -48,9 +66,16 @@ class ExtractionResult(BaseModel):
 
     entries: list[VocabEntry]
     page_identifier: str | None = None
-    source_image_path: Path
-    model_used: str
+    source_image_path: Path = Path("placeholder")
+    model_used: str = "placeholder"
     extracted_at: datetime = Field(default_factory=utcnow)
+
+    @field_validator("extracted_at", mode="before")
+    @classmethod
+    def _coerce_extracted_at(cls, v: Any) -> Any:
+        if v is None or v == "placeholder":
+            return utcnow()
+        return v
 
 
 class WordConnections(BaseModel):
@@ -66,6 +91,15 @@ class WordConnections(BaseModel):
         default_factory=list,
         description="Word family members, cognates, morphologically related terms.",
     )
+
+    @field_validator("synonyms", "antonyms", "collocations", "related_words", mode="before")
+    @classmethod
+    def _coerce_str_list(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class TeachingCard(BaseModel):
